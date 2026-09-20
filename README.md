@@ -75,7 +75,7 @@ docker/              local PostgreSQL initialization
    npm run build
    ```
 
-The integration suite resets the local test schema and applies every committed SQL migration. This repository does **not** provide a deployment migration command; apply the reviewed migration files through the deployment platform before enabling a production gate.
+The integration suite resets the local test schema and applies every committed SQL migration. For a deployment, `npm run db:migrate:deploy --workspace @mis-servicios/api` applies those same committed files to the database named by `DATABASE_URL`: it takes an advisory lock so two deploys cannot run at once, records each migration with a checksum, and refuses to continue when a file changed after it was applied. Build first, because it runs the compiled runner and the copied migration files. Run it before enabling any product gate.
 
 ## Development data
 
@@ -167,6 +167,38 @@ Keep `ALERT_DISPATCH_INTERVAL_SECONDS` short for incident latency; the wake budg
 The remaining trade-off is bounded: an opening alert created while the worker sleeps waits until the next wake, so an alert can be delayed by up to one idle interval (30 minutes with the default) instead of one dispatch interval. That is minor next to the episode time scales already in force (`OUTAGE_QUORUM_WINDOW_MINUTES` defaults to 60 minutes and `OUTAGE_EPISODE_LIFETIME_HOURS` to 6); lower `ALERT_DISPATCH_IDLE_INTERVAL_SECONDS` when alert latency matters more than compute, keeping it above the suspend window. Retention cleanup is unaffected because it is gated and runs daily.
 
 On the free plan, also stop preview deployments from creating their own database branch. Point previews at the shared development branch; otherwise every preview holds compute active against the same allowance as the deployed environment. Delete the branches that accumulated before the change, then verify the fix with one preview deployment by checking two things: the database branch count no longer grows by one per deployment, and the deployment log no longer contains a branch-creation step.
+
+## Database provider
+
+The API needs one PostgreSQL instance reachable from the API host. The schema uses no provider-specific extension, so any managed PostgreSQL fits. What differs between providers is how they meter an always-on application: a provider that suspends an idle compute and budgets monthly compute hours behaves very differently from one that suspends a project only after a long inactivity window. Read [Database wake pattern](#database-wake-pattern) before choosing, and keep the interval variables above whichever suspend window applies.
+
+### Moving to another provider
+
+1. Create the database, then copy its **pooled** connection string. A provider whose direct endpoint is IPv6-only, Supabase among them, needs its pooler to be reachable from an IPv4 host.
+2. Set `DATABASE_URL` to that string in the deployment environment. Never commit it.
+3. Build, apply the schema, then load the pilot zones:
+
+```sh
+npm run build --workspace @mis-servicios/api
+DATABASE_URL="<pooled-connection-string>" npm run db:migrate:deploy --workspace @mis-servicios/api
+DATABASE_URL="<pooled-connection-string>" npm run db:seed --workspace @mis-servicios/api
+```
+
+4. Verify all three endpoints before re-enabling any gate:
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' "$API/health"    # 200
+curl -s -o /dev/null -w '%{http_code}\n' "$API/v1/cells"  # 200, empty list or data — never 500
+curl -s -o /dev/null -w '%{http_code}\n' "$API/v1/zones"  # 200
+```
+
+A `500` from either data endpoint means the API cannot reach the database, not that the schema is wrong: the health route answers without a query, so it stays green while both data routes fail. An empty `/v1/zones` means the seed did not run, and publication stays at zero without approved zones.
+
+### Notes that save time
+
+- The migration runner **baselines** a database that already carries the schema but records no migration history, instead of reapplying every file. That is what makes a restored dump or a copied database safe to point at.
+- It fails on a checksum mismatch by design. Never edit a migration that has already been applied; add a new one.
+- Moving providers does not change the product gates. Keep them disabled until the three checks above return `200`.
 
 ## Privacy and retention
 
