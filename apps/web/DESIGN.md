@@ -66,13 +66,13 @@ A purpose-built light basemap (CARTO Positron and its peers) is the real fix and
   - the location step carries the activation control plus live-region copy, so its illustration yields height (`clamp(3rem, 8dvh, 5rem)` while `.onboarding-activate` is present or the note/success status has text) and the whole step fits without scrolling at the reference mobile viewport; the other steps keep the full illustration height, and the internal scroll remains for smaller screens.
 - **Focus order**: the card DOM places the step heading first and `Omitir` directly after it (`order: -1` keeps the head visually on top — `order` moves paint, never focus order), so one forward Tab from the open-time focus (the step heading) reaches "Omitir" without cycling the page.
 - **Narrow desktop (56–64rem)**: while the onboarding owns the screen the plate rests underneath it and the integrated legal line carries the naming; after the flow closes, `watchNoticeClearance` only sets `--notice-clearance` when the plate can actually reach the control strip horizontally (right edge + ~66px of control width/inset vs the viewport); on a wide desktop it stays unset and the controls keep Leaflet's default 10px top. On mobile the card keeps the same reserve so it never touches the strip.
-- The desktop surface's entrance is a single quiet fade; both the card rise and the fade are disabled under `prefers-reduced-motion: reduce`.
+- The desktop surface's entrance is a single quiet fade; both the card rise and the fade are disabled under `prefers-reduced-motion: reduce`. Step-to-step navigation uses the same quiet language: a fade out, the copy swap, and a fade in.
 
 ## Motion
 
-Motion is navigation, not decoration. Leaflet's `fitBounds` / `setView` animate the district framing; tapping a report in the list flies the map to that cell centre. The visitor's own dot pulses (`animation: pulse`) as the one always-on signal.
+Motion is navigation, not decoration. Leaflet's `fitBounds` / `setView` animate the district framing; tapping a report in the list flies the map to that cell centre. The visitor's own dot pulses (`animation: pulse`) as the one always-on signal. The onboarding reads as motion too: each step change fades the current slide out (illustration and content column together, `--onboarding-fade`, 160ms), swaps the copy, and fades the new step back in, and leaving the last step into the app dissolves the whole surface before it is removed. Step moves are queued, so rapid clicks never drop a step.
 
-`prefers-reduced-motion: reduce` removes the pulse and the rail transition.
+`prefers-reduced-motion: reduce` removes the pulse, the rail transition, and every onboarding fade (the card rise, the step cross-fade, and the exit fade all swap directly).
 
 ## Refresh
 

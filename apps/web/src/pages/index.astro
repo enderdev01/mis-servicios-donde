@@ -589,6 +589,15 @@ import { siteNotice, unofficialNotice } from '../content.js';
       let onboardingFocusReturn: HTMLElement | null = null;
       let onboardingBuilt = false;
       /**
+       * Slide fades: a move dims the current step out, swaps the copy, and
+       * brings the new step back. Moves are queued so rapid clicks still land
+       * one step each, and the fade duration mirrors `--onboarding-fade`.
+       */
+      const ONBOARDING_FADE_MS = 160;
+      const onboardingMoveQueue: number[] = [];
+      let onboardingMoving = false;
+      let onboardingClosing = false;
+      /**
        * Set once a location request succeeds while the onboarding is open.
        * Success is a state on the location step, never a completion: the flow
        * stays open, "Siguiente" keeps advancing, and only finishing step 4
@@ -730,9 +739,46 @@ import { siteNotice, unofficialNotice } from '../content.js';
         if (event.key === 'Escape') { event.preventDefault(); closeOnboarding('skipped'); }
       };
 
+      const prefersReducedMotion = (): boolean =>
+        typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const waitForFade = (): Promise<void> =>
+        new Promise((resolve) => window.setTimeout(resolve, ONBOARDING_FADE_MS));
+
       function moveOnboarding(delta: number): void {
-        onboardingIndex = Math.min(Math.max(onboardingIndex + delta, 0), onboardingSteps.length - 1);
-        renderOnboardingStep();
+        const target = Math.min(Math.max(onboardingIndex + delta, 0), onboardingSteps.length - 1);
+        if (target === onboardingIndex) return;
+        onboardingMoveQueue.push(delta);
+        void drainOnboardingMoves();
+      }
+
+      /**
+       * Drains queued step moves, fading the current slide out before the copy
+       * swaps and back in after it. The queue keeps rapid clicks lossless —
+       * three quick taps still land three steps ahead — while reduced motion
+       * swaps directly and settles synchronously.
+       */
+      async function drainOnboardingMoves(): Promise<void> {
+        if (onboardingMoving || onboardingClosing) return;
+        onboardingMoving = true;
+        const card = onboardingParts.stage.parentElement;
+        const animated = card !== null && !prefersReducedMotion();
+        while (onboardingMoveQueue.length > 0 && !onboardingClosing) {
+          const delta = onboardingMoveQueue.shift() as number;
+          const target = Math.min(Math.max(onboardingIndex + delta, 0), onboardingSteps.length - 1);
+          if (target === onboardingIndex) continue;
+          if (animated && card) {
+            card.dataset.fade = 'out';
+            await waitForFade();
+            if (onboardingClosing) break;
+          }
+          onboardingIndex = target;
+          renderOnboardingStep();
+          if (animated && card) {
+            card.removeAttribute('data-fade');
+            await waitForFade();
+          }
+        }
+        onboardingMoving = false;
       }
 
       function renderOnboardingStep(): void {
@@ -760,17 +806,29 @@ import { siteNotice, unofficialNotice } from '../content.js';
       }
 
       function closeOnboarding(status: 'completed' | 'skipped'): void {
-        if (!onboarding || onboarding.hidden) return;
+        if (!onboarding || onboarding.hidden || onboardingClosing) return;
         // Storage can be full or blocked (private mode); skipping must still work.
         try { persistOnboardingStatus(localStorage, status); } catch { /* this visit simply replays next time */ }
-        onboarding.hidden = true;
-        document.removeEventListener('keydown', onboardingEscape);
-        onboarding.replaceChildren();
-        onboardingBuilt = false;
-        onboardingIndex = 0;
-        onboardingLocationShown = false;
-        onboardingFocusReturn?.focus({ preventScroll: true });
-        onboardingFocusReturn = null;
+        const finish = (): void => {
+          onboarding.hidden = true;
+          onboarding.removeAttribute('data-closing');
+          document.removeEventListener('keydown', onboardingEscape);
+          onboarding.replaceChildren();
+          onboardingBuilt = false;
+          onboardingIndex = 0;
+          onboardingMoveQueue.length = 0;
+          onboardingClosing = false;
+          onboardingLocationShown = false;
+          onboardingFocusReturn?.focus({ preventScroll: true });
+          onboardingFocusReturn = null;
+        };
+        // Entering the app is a fade too: the last step (or a skip) dissolves
+        // the whole surface before the layer is torn down. Reduced motion
+        // closes at once, with nothing to wait for.
+        if (prefersReducedMotion()) { finish(); return; }
+        onboardingClosing = true;
+        onboarding.dataset.closing = 'true';
+        window.setTimeout(finish, ONBOARDING_FADE_MS);
       }
 
       function startOnboarding(): void {
@@ -952,7 +1010,10 @@ import { siteNotice, unofficialNotice } from '../content.js';
        * (>=56rem) a full-screen first-load surface that owns the viewport —
        * see the media block at the bottom.
        */
-      .onboarding { position: fixed; inset: 0; z-index: 800; pointer-events: none; }
+      .onboarding { position: fixed; inset: 0; z-index: 800; pointer-events: none; --onboarding-fade: 160ms; transition: opacity var(--onboarding-fade, 160ms) ease; }
+      /* Entering the app is a fade too: the whole surface dissolves once the
+       * last step is done (or the visitor skips) before the layer is removed. */
+      .onboarding[data-closing='true'] { opacity: 0; }
       /*
        * Mobile geometry contract: the card reserves the top-right control
        * column (zoom + locate, ~34px wide at the right inset) by stopping
@@ -983,6 +1044,14 @@ import { siteNotice, unofficialNotice } from '../content.js';
        * It is the card's scroll area: the footer nav sits outside it, so
        * scrolling never slides copy under the navigation. */
       .onboarding-content { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow-y: auto; }
+      /*
+       * Step changes fade: the illustration and the content column dim out
+       * together, the copy swaps, and both come back. The duration lives in
+       * --onboarding-fade so script timings and CSS stay in lockstep.
+       */
+      .onboarding-stage, .onboarding-content { transition: opacity var(--onboarding-fade, 160ms) ease; }
+      .onboarding-card[data-fade='out'] .onboarding-stage,
+      .onboarding-card[data-fade='out'] .onboarding-content { opacity: 0; }
       /*
        * The head carries "Omitir". In the DOM it follows the step heading so
        * a forward Tab from the open-time focus reaches skip first; `order: -1`
@@ -1333,6 +1402,7 @@ import { siteNotice, unofficialNotice } from '../content.js';
         .rail, #submit { transition: none; }
         .me span { animation: none; }
         .onboarding-card, .onboarding { animation: none; }
+        .onboarding-stage, .onboarding-content, .onboarding { transition: none; }
       }
     </style>
   </body>
