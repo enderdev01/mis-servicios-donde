@@ -70,7 +70,7 @@ A purpose-built light basemap (CARTO Positron and its peers) is the real fix and
 
 ## Motion
 
-Motion is navigation, not decoration. Leaflet's `fitBounds` / `setView` animate the district framing; tapping a report in the list flies the map to that cell centre. The visitor's own dot pulses (`animation: pulse`) as the one always-on signal. The onboarding reads as motion too: each step change fades the current slide out (illustration and content column together, `--onboarding-fade`, 160ms), swaps the copy, and fades the new step back in, and leaving the last step into the app dissolves the whole surface before it is removed. Step moves are queued, so rapid clicks never drop a step.
+Motion is navigation, not decoration. Leaflet's `fitBounds` / `setView` animate the district framing; tapping a report in the list flies the map to that cell centre. The visitor's own dot pulses (`animation: pulse`) as the one always-on signal. The onboarding reads as motion too: each step change fades the current slide out (illustration and content column together, `--onboarding-fade`, 160ms), swaps the copy, and fades the new step back in, and leaving the last step into the app dissolves the whole surface before it is removed. Step moves are queued, so rapid clicks never drop a step. The four illustrations are preloaded at open and a move holds the transparent slide until the next one is decoded, so the reused `<img>` never paints the previous bitmap while the new file is in flight.
 
 `prefers-reduced-motion: reduce` removes the pulse, the rail transition, and every onboarding fade (the card rise, the step cross-fade, and the exit fade all swap directly).
 
