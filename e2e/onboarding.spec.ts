@@ -58,6 +58,68 @@ test('walks a first visit through four illustrated steps', async ({ page }) => {
   await expect(onboarding.locator('.onboarding-body')).toContainText('zonas piloto');
 });
 
+test('fades between steps and still lands on every step with rapid clicks', async ({ page }) => {
+  await page.goto('/');
+
+  const onboarding = page.getByRole('region', { name: 'Introducción al mapa comunitario' });
+
+  // The illustration and the content column carry a real opacity transition, so
+  // a step change reads as a fade rather than an instant swap.
+  const durations = await page.evaluate(() => ({
+    stage: getComputedStyle(document.querySelector('.onboarding-stage')!).transitionDuration,
+    content: getComputedStyle(document.querySelector('.onboarding-content')!).transitionDuration,
+  }));
+  expect(durations.stage).not.toBe('0s');
+  expect(durations.content).not.toBe('0s');
+
+  // A step change dims the current slide out before swapping. Rapid clicks are
+  // queued, so none of the three forward moves is dropped.
+  const next = onboarding.getByRole('button', { name: 'Siguiente' });
+  await next.click();
+  await page.locator('.onboarding-card[data-fade="out"]').waitFor({ state: 'attached' });
+  await next.click();
+  await next.click();
+  await expect(onboarding.locator('.onboarding-progress')).toContainText('Paso 4 de 4');
+  await expect(page.locator('.onboarding-card[data-fade="out"]')).toHaveCount(0);
+});
+
+test('fades the surface out before entering the app', async ({ page }) => {
+  await page.goto('/');
+
+  const onboarding = page.getByRole('region', { name: 'Introducción al mapa comunitario' });
+  for (let step = 0; step < 3; step += 1) await onboarding.getByRole('button', { name: 'Siguiente' }).click();
+  await expect(onboarding.locator('.onboarding-progress')).toContainText('Paso 4 de 4');
+
+  const layerDuration = await page.evaluate(
+    () => getComputedStyle(document.querySelector('#onboarding')!).transitionDuration,
+  );
+  expect(layerDuration).not.toBe('0s');
+
+  // Leaving the last step dissolves the whole surface before it is removed.
+  await onboarding.getByRole('button', { name: 'Empezar a usar el mapa' }).click();
+  await expect(page.locator('#onboarding[data-closing="true"]')).toHaveCount(1);
+  await expect(onboarding).toBeHidden();
+  await expect(page.locator('#onboarding[data-closing="true"]')).toHaveCount(0);
+});
+
+test('skips the slide fade under reduced motion', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+
+  const onboarding = page.getByRole('region', { name: 'Introducción al mapa comunitario' });
+  const durations = await page.evaluate(() => ({
+    stage: getComputedStyle(document.querySelector('.onboarding-stage')!).transitionDuration,
+    layer: getComputedStyle(document.querySelector('#onboarding')!).transitionDuration,
+  }));
+  expect(durations.stage).toBe('0s');
+  expect(durations.layer).toBe('0s');
+
+  // Navigation stays correct without the animation.
+  await onboarding.getByRole('button', { name: 'Siguiente' }).click();
+  await expect(onboarding.locator('.onboarding-progress')).toContainText('Paso 2 de 4');
+  await expect(page.locator('.onboarding-card[data-fade="out"]')).toHaveCount(0);
+});
+
 test('never requests geolocation before the visitor activates it', async ({ page }) => {
   const geo = await spyGeolocation(page, 'pending');
   await page.goto('/');
