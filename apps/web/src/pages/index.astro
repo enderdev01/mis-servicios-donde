@@ -1581,6 +1581,21 @@ import { siteNotice, unofficialNotice } from '../content.js';
        * does that job — so the rule would just be a second line under a line.
        */
       .rail-body[data-tabs='on'] > .panel { padding-top: .25rem; border-top: 0; }
+      /*
+       * The lede is the confirmation rule ("three distinct neighbours…"), and on
+       * a phone it was 67px of framing sitting on the path to the primary
+       * action: the report tab needed 526px of a 489px sheet, so the submit
+       * button was below the fold — the exact overload the tabs were supposed to
+       * end. It is not deleted, because a visitor who skipped the onboarding has
+       * no other place to learn the rule. It shows on the reports tab instead,
+       * which is where "sin confirmar" actually appears in the list, and where
+       * it still fits without scrolling. The report tab then holds its whole
+       * form at once (443px) and hands ~46px back to the map.
+       *
+       * Scoped to `[data-tabs='on']`, so the desktop rail — one column with room
+       * for everything — keeps the lede under the heading exactly as before.
+       */
+      .rail-body[data-tabs='on']:has(> #report-panel[data-tab-state='active']) > .lede { display: none; }
 
       h1 {
         margin: .1rem 0 .45rem; font-family: Comfortaa, Nunito, sans-serif; font-weight: 700;
