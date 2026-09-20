@@ -68,15 +68,17 @@ import { siteNotice, unofficialNotice } from '../content.js';
     </div>
 
     <!--
-      First-run onboarding: on mobile a floating teaching card over the map, on
-      desktop (>=56rem) a full-screen first-load experience that owns the whole
-      viewport — a two-column editorial composition (illustration + content)
-      that blocks pointer interaction with the map and rail behind it, with the
-      permanent non-official naming integrated on every step. No dialog
-      semantics are taken; focus moves to the card on open and returns where it
-      came from on close, and Escape closes it from anywhere. A successful
-      location activation never completes the flow: it shows a success state on
-      the location step, and only finishing step 4 persists completion.
+      First-run onboarding: a section that comes BEFORE the map on every
+      viewport, owning the whole screen from the moment the page opens and
+      blocking pointer interaction with the map and rail behind it, with the
+      permanent non-official naming integrated on every step. Mobile stacks one
+      column (illustration, copy, navigation) and nothing inside it scrolls —
+      the illustration yields height instead; desktop (>=56rem) composes the
+      same parts into a two-column editorial spread. No dialog semantics are
+      taken; focus moves to the card on open and returns where it came from on
+      close, and Escape closes it from anywhere. A successful location
+      activation never completes the flow: it shows a success state on the
+      location step, and only finishing step 4 persists completion.
     -->
     <div class="onboarding" id="onboarding" hidden role="region" aria-label="Introducción al mapa comunitario" tabindex="-1"></div>
 
@@ -643,12 +645,11 @@ import { siteNotice, unofficialNotice } from '../content.js';
       }
 
       /*
-       * First-run onboarding: four illustrated steps over the live map, rendered
-       * from one copy source (content.js). The layer is a region, not a dialog:
-       * the map stays usable around the card, and on mobile the card floats
-       * above the sheet (even opened) as a first-run teaching layer, so no
-       * focus is trapped and only the open-time focus move and close-time
-       * restore are managed.
+       * First-run onboarding: four illustrated steps ahead of the live map,
+       * rendered from one copy source (content.js). The layer is a region, not
+       * a dialog: it owns the viewport on every size, but nothing behind it is
+       * competing for the visitor, so no focus is trapped and only the
+       * open-time focus move and close-time restore are managed.
        */
       const onboarding = $<HTMLElement>('#onboarding');
       const plate = $<HTMLElement>('#site-identity');
@@ -1142,46 +1143,60 @@ import { siteNotice, unofficialNotice } from '../content.js';
       .unofficial { margin: 0; color: var(--muted); font-size: .74rem; line-height: 1.4; max-width: 62ch; text-wrap: pretty; }
 
       /*
-       * First-run onboarding: on mobile a floating card over the live map
-       * (the container forwards no pointer events; only the card catches
-       * them, so the map and rail stay interactive around it); on desktop
-       * (>=56rem) a full-screen first-load surface that owns the viewport —
-       * see the media block at the bottom.
+       * First-run onboarding: a section that comes *before* the map on every
+       * viewport, never a card parked inside it. The layer takes pointer
+       * events and paints the opaque daylight ground, so the map and rail
+       * behind it are unreachable until the visitor finishes or skips. Mobile
+       * stacks one column; the >=56rem block composes the same parts into two.
        */
-      .onboarding { position: fixed; inset: 0; z-index: 800; pointer-events: none; --onboarding-fade: 160ms; transition: opacity var(--onboarding-fade, 160ms) ease; }
+      .onboarding {
+        position: fixed; inset: 0; z-index: 800; pointer-events: auto;
+        --onboarding-fade: 160ms;
+        background:
+          radial-gradient(72rem 46rem at 14% 24%, rgb(44 157 218 / .09), transparent 62%),
+          linear-gradient(168deg, var(--surface) 0%, var(--ground) 56%, #E5EBE3 100%);
+        transition: opacity var(--onboarding-fade, 160ms) ease;
+        animation: onboard-fade .4s cubic-bezier(.16, 1, .3, 1);
+      }
+      @keyframes onboard-fade { from { opacity: 0; } }
       /* Entering the app is a fade too: the whole surface dissolves once the
        * last step is done (or the visitor skips) before the layer is removed. */
       .onboarding[data-closing='true'] { opacity: 0; }
       /*
-       * Mobile geometry contract: the card reserves the top-right control
-       * column (zoom + locate, ~34px wide at the right inset) by stopping
-       * 4.25rem from the right edge, sits above the lifted attribution
-       * (`.leaflet-bottom` is at 9.6rem), and never grows tall enough to slide
-       * under the permanent plate — its height budget starts below the
-       * measured `--notice-clearance` and any overflow scrolls inside the
-       * card. The card itself is a flex shell that clips: its content column
-       * is the scroll area and the nav is a real footer OUTSIDE that scroll
-       * area, so the footer can never paint over step copy.
+       * Mobile geometry contract: the card IS the viewport. It is a flex
+       * column — illustration, then copy, then the navigation footer — and
+       * nothing inside it scrolls. The copy takes the height it needs
+       * (`flex: none`) and the illustration absorbs whatever is left
+       * (`flex: 1 1 auto; min-height: 0`), so a short phone shrinks the
+       * artwork instead of hiding prose behind a scrollbar. The top padding
+       * reserves the row the absolutely positioned "Omitir" control sits in.
        */
       .onboarding-card {
-        position: absolute; left: 1rem; right: 4.25rem;
-        bottom: calc(9.6rem + env(safe-area-inset-bottom) + 2.6rem);
-        max-height: calc(100dvh - var(--notice-clearance, 4.5rem) - 13.2rem - env(safe-area-inset-bottom));
+        position: absolute; inset: 0;
         display: flex; flex-direction: column;
-        padding: .9rem 1.15rem 1.15rem;
-        border: 1px solid var(--line); border-radius: 16px;
-        background: var(--surface);
-        box-shadow: 0 18px 48px rgb(22 32 26 / .22);
-        overflow: hidden; pointer-events: auto;
-        animation: onboard-rise .34s cubic-bezier(.16, 1, .3, 1);
+        padding:
+          calc(.9rem + env(safe-area-inset-top) + 1.9rem)
+          1.15rem
+          calc(1.15rem + env(safe-area-inset-bottom));
+        border: 0; background: transparent; box-shadow: none;
+        overflow: hidden;
       }
-      @keyframes onboard-rise {
-        from { opacity: 0; transform: translateY(14px); }
+      /* The content column: heading, prose, actions, progress, legal. It takes
+       * its natural height and never scrolls — the stage yields instead. */
+      .onboarding-content { flex: none; display: flex; flex-direction: column; min-width: 0; overflow: visible; }
+      /*
+       * The stage absorbs the leftover height, so the copy and the navigation
+       * settle against the bottom edge within thumb reach instead of leaving a
+       * hole under them. The FIGURE, not the stage, is what carries the fixed
+       * size: it keeps `34dvh` on every step — step 2 has the activation
+       * control and step 4 the longest body, and sizing the box by "whatever
+       * the copy left over" rendered each step differently — and it is
+       * centred in whatever band the stage ends up with.
+       */
+      .onboarding-stage {
+        flex: 1 1 auto; min-height: 0;
+        display: flex; align-items: center; justify-content: center;
       }
-      /* The content column: skip, heading, prose, actions, progress, legal.
-       * It is the card's scroll area: the footer nav sits outside it, so
-       * scrolling never slides copy under the navigation. */
-      .onboarding-content { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow-y: auto; }
       /*
        * Step changes fade: the illustration and the content column dim out
        * together, the copy swaps, and both come back. The duration lives in
@@ -1196,18 +1211,35 @@ import { siteNotice, unofficialNotice } from '../content.js';
        * keeps it visually on top of the card. `order` moves paint, never
        * focus order.
        */
-      .onboarding-head { order: -1; display: flex; justify-content: flex-end; min-height: 1.1rem; }
+      .onboarding-head {
+        order: -1; display: flex; justify-content: flex-end; min-height: 1.1rem;
+        /* Lifted out of the flow on mobile: the illustration needs to paint
+         * above it while the control stays right after the heading in DOM
+         * order, which `order` alone could not deliver from inside the
+         * content column. The desktop block puts it back in the flow. */
+        position: absolute; top: calc(.9rem + env(safe-area-inset-top)); right: 1.15rem; z-index: 1;
+      }
       .onboarding-skip {
         margin: -.2rem -.2rem -.35rem auto; padding: .2rem .45rem;
         border: 0; background: none; color: var(--muted);
         font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer;
       }
       .onboarding-skip:hover { color: var(--ink); }
+      /*
+       * One box, every step. The assets are not one shape — `3onboard.webp` is
+       * 1080x810 while the other three are 810x1080 — so a figure sized only
+       * by height rendered the third step at a visibly different footprint.
+       * The figure is the standard instead: the artwork is contained inside
+       * it, centred and never cropped, so the footprint cannot change between
+       * steps.
+       */
       .onboarding-figure {
         display: flex; align-items: center; justify-content: center;
-        height: clamp(7.5rem, 23dvh, 10.5rem); margin: 0 0 .4rem;
+        /* `max-height` is the give: a cramped phone shrinks the artwork rather
+         * than pushing prose behind a scrollbar. */
+        width: 100%; height: 34dvh; max-height: 100%; min-height: 0; margin: 0 0 .5rem;
       }
-      .onboarding-figure img { max-height: 100%; max-width: 100%; object-fit: contain; }
+      .onboarding-figure img { width: 100%; height: 100%; object-fit: contain; }
       .onboarding-title {
         margin: 0 0 .4rem; font-family: Comfortaa, Nunito, sans-serif; font-weight: 700;
         font-size: 1.12rem; letter-spacing: -.02em; text-wrap: balance;
@@ -1242,11 +1274,14 @@ import { siteNotice, unofficialNotice } from '../content.js';
       .onboarding-success:focus-visible { outline: none; }
       html[data-input='keyboard'] .onboarding-success:focus-visible { outline: 2px solid var(--agua); outline-offset: 3px; }
       /*
-       * The integrated non-official naming inside the full-screen desktop
-       * experience. On mobile the permanent plate above the card already
-       * carries it, so the duplicate stays desktop-only.
+       * The integrated non-official naming. The first-run section owns the
+       * whole viewport on every size now, so the identity control is behind
+       * it and this line is what carries the naming on every step.
        */
-      .onboarding-legal { display: none; }
+      .onboarding-legal {
+        margin: .85rem 0 0; padding-top: .7rem; border-top: 1px solid var(--line);
+        color: var(--muted); font-size: .7rem; line-height: 1.5; text-wrap: pretty;
+      }
       .onboarding-activate {
         margin-top: .7rem; width: 100%; padding: .68rem; font: inherit; font-weight: 800; font-size: .9rem;
         color: #fff; background: var(--agua); border: 0; border-radius: 12px; cursor: pointer;
@@ -1260,19 +1295,13 @@ import { siteNotice, unofficialNotice } from '../content.js';
       .onboarding-progress { margin: 0; color: var(--muted); font-size: .74rem; font-variant-numeric: tabular-nums; }
       .onboarding-nav { display: flex; gap: .55rem; }
       /*
-       * The step navigation never scrolls away and never overlaps copy: it is
-       * a real footer BELOW the card's scroll area (a flex child outside the
-       * scrollable content column), so it stays visible and hit-test
+       * The step navigation is the card's last row — a flex child below the
+       * content, never a sticky overlay — so it stays visible and hit-test
        * reachable on every step, including the location step before and after
-       * activation, while inserted copy stays fully readable. (Mobile-only;
-       * the desktop composition resets it into its grid row.)
+       * activation, and can never paint over step copy. (Mobile-only; the
+       * desktop composition resets it into its grid row.)
        */
-      .onboarding-nav {
-        flex: none;
-        margin: .6rem 0 0; padding: .55rem 0 0;
-        background: var(--surface);
-        border-top: 1px solid var(--line);
-      }
+      .onboarding-nav { flex: none; margin: .85rem 0 0; }
       .onboarding-ghost {
         padding: .62rem .9rem; font: inherit; font-size: .86rem; font-weight: 700;
         color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 12px; cursor: pointer;
@@ -1441,18 +1470,6 @@ import { siteNotice, unofficialNotice } from '../content.js';
 
       @media (max-width: 55.99rem) {
         .leaflet-bottom { bottom: 9.6rem; }
-        /*
-         * Location step (activation control present, or denial/success copy
-         * inserted): this step carries the activate control plus live-region
-         * copy, so the illustration yields height and the whole step — copy,
-         * retry and navigation — fits without any scrolling at the reference
-         * mobile viewport. The internal scroll remains for smaller screens.
-         */
-        .onboarding-card:has(.onboarding-activate:not([hidden])) .onboarding-figure,
-        .onboarding-card:has(.onboarding-note:not(:empty)) .onboarding-figure,
-        .onboarding-card:has(.onboarding-success:not(:empty)) .onboarding-figure {
-          height: clamp(3rem, 8dvh, 5rem);
-        }
       }
 
       @media (min-width: 56rem) {
@@ -1466,49 +1483,36 @@ import { siteNotice, unofficialNotice } from '../content.js';
         .rail-body { padding: .6rem 1.5rem 2rem; }
         .identity { left: 26.5rem; }
         /*
-         * Desktop first-load contract: the onboarding is a full-screen
-         * experience that owns the whole viewport from the moment the page
-         * opens — a two-column editorial composition (large illustration on
-         * the left, content and actions on the right) on the daylight ground.
-         * The surface takes pointer events, so the map and rail behind it are
-         * unreachable until the visitor finishes or skips; the integrated
-         * `.onboarding-legal` line keeps the permanent non-official naming
-         * visible on every step while the plate rests underneath.
+         * Desktop composition: the same owned viewport, laid out as a
+         * two-column editorial spread — large illustration on the left,
+         * content and actions on the right. Ownership itself (pointer events,
+         * the daylight ground, the entrance fade) is in the base rules now,
+         * because mobile owns the viewport too.
          */
-        .onboarding {
-          pointer-events: auto;
-          background:
-            radial-gradient(72rem 46rem at 14% 24%, rgb(44 157 218 / .09), transparent 62%),
-            linear-gradient(168deg, var(--surface) 0%, var(--ground) 56%, #E5EBE3 100%);
-          animation: onboard-fade .4s cubic-bezier(.16, 1, .3, 1);
-        }
-        @keyframes onboard-fade { from { opacity: 0; } }
         .onboarding-card {
-          position: relative; inset: auto; bottom: auto;
-          width: 100%; max-width: none; height: 100dvh; max-height: none;
+          position: relative; inset: auto;
+          width: 100%; height: 100dvh;
           display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
           grid-template-rows: minmax(0, 1fr) auto;
           align-items: stretch;
           column-gap: clamp(2.5rem, 6vw, 6rem);
           padding: 2.5rem clamp(2.25rem, 7vw, 6.5rem);
-          border: 0; border-radius: 0;
-          background: transparent; box-shadow: none;
-          overflow: visible; animation: none;
+          overflow: visible;
         }
         .onboarding-stage {
           grid-column: 1; grid-row: 1 / -1;
-          display: flex; align-items: center; justify-content: center;
-          min-width: 0; min-height: 0;
+          flex: none; height: auto; min-width: 0; min-height: 0;
         }
-        .onboarding-figure { height: auto; margin: 0; width: 100%; max-width: 42rem; }
-        .onboarding-figure img { width: 100%; max-height: min(76dvh, 44rem); object-fit: contain; }
+        /* The same standardized box, sized for the column. */
+        .onboarding-figure { height: 100%; max-height: min(76dvh, 44rem); width: 100%; max-width: 42rem; margin: 0; }
         .onboarding-content {
           grid-column: 2; grid-row: 1;
           justify-content: center;
           max-width: 34rem;
           overflow: visible;
         }
-        .onboarding-head { margin: 0 0 1.3rem; }
+        /* Back in the flow: the right column has room for it above the heading. */
+        .onboarding-head { position: static; margin: 0 0 1.3rem; }
         .onboarding-skip { font-size: .84rem; }
         .onboarding-title {
           margin: 0 0 .95rem;
@@ -1521,21 +1525,19 @@ import { siteNotice, unofficialNotice } from '../content.js';
         .onboarding-meta { margin-top: 1.7rem; }
         .onboarding-dots span { width: 7px; height: 7px; }
         .onboarding-progress { font-size: .8rem; }
-        .onboarding-nav { grid-column: 2; grid-row: 2; position: static; flex: none; margin-top: .7rem; padding: 0; max-width: 24rem; background: transparent; border-top: 0; }
+        .onboarding-nav { grid-column: 2; grid-row: 2; flex: none; margin-top: .7rem; max-width: 24rem; }
         .onboarding-ghost { padding: .72rem .95rem; font-size: .92rem; }
         .onboarding-primary { padding: .78rem; font-size: .97rem; }
         .onboarding-legal {
-          display: block;
-          margin: 2.2rem 0 0; padding-top: 1rem; border-top: 1px solid var(--line);
-          color: var(--muted); font-size: .78rem; line-height: 1.55; max-width: 46ch;
-          text-wrap: pretty;
+          margin: 2.2rem 0 0; padding-top: 1rem;
+          font-size: .78rem; line-height: 1.55; max-width: 46ch;
         }
       }
 
       @media (prefers-reduced-motion: reduce) {
         .rail, #submit { transition: none; }
         .me span { animation: none; }
-        .onboarding-card, .onboarding { animation: none; }
+        .onboarding { animation: none; }
         .onboarding-stage, .onboarding-content, .onboarding { transition: none; }
       }
     </style>

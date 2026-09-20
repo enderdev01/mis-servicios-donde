@@ -200,6 +200,7 @@ test('keeps the onboarding open on the location step after a successful activati
   // readable right where the transition leaves the scroll — never painted
   // over by the nav footer and never clipped by the card.
   await assertFeedbackUnobscured(page, '.onboarding-success', 'the activation success copy');
+  await assertNoInternalScroll(page, 'the location step after a successful activation');
 
   // The success status is focused by script after a pointer activation, so it
   // must not paint a ring on the mouse path — the status stays focused and
@@ -279,6 +280,7 @@ test('falls back to a usable map when location is denied', async ({ page }) => {
   // be wholly inside the card and reachable across its whole box.
   await assertFeedbackUnobscured(page, '.onboarding-note', 'the denial note');
   await assertRetryFullyInsideCard(page);
+  await assertNoInternalScroll(page, 'the location step after a denial');
 
   // Denial never takes the map down: the aggregate still loads as text.
   await expect(page.locator('#map-state')).toContainText('No hay cortes reportados en este momento.');
@@ -326,25 +328,135 @@ test('closes with Escape and keeps the map useful after skipping', async ({ page
   await expect(page.getByRole('status')).toContainText('No hay cortes reportados en este momento.');
 });
 
-test('keeps the peek sheet and grip clear on mobile', async ({ page }) => {
+/**
+ * The onboarding is a section that comes *before* the map, not a card parked
+ * inside it. Nothing behind the layer may answer a pointer on any viewport, and
+ * the step copy must never be read through an internal scrollbar: the
+ * illustration yields height instead.
+ */
+interface ScrollReport {
+  documentOverflows: boolean;
+  scrollable: { selector: string; scrollHeight: number; clientHeight: number }[];
+}
+
+async function measureInternalScroll(page: Page): Promise<ScrollReport> {
+  return page.evaluate(() => {
+    const selectors = ['.onboarding-card', '.onboarding-content', '.onboarding-stage'];
+    return {
+      documentOverflows:
+        document.documentElement.scrollHeight > window.innerHeight
+        || document.documentElement.scrollWidth > window.innerWidth,
+      scrollable: selectors.flatMap((selector) => {
+        const element = document.querySelector(selector);
+        if (!(element instanceof HTMLElement)) return [];
+        return [{ selector, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight }];
+      }),
+    };
+  });
+}
+
+async function assertNoInternalScroll(page: Page, label: string): Promise<void> {
+  const report = await measureInternalScroll(page);
+  expect(report.documentOverflows, `${label} never makes the page itself scroll`).toBe(false);
+  // One pixel of slack absorbs sub-pixel layout rounding; a real scrollbar is
+  // always many pixels of overflow.
+  const overflowing = report.scrollable.filter((entry) => entry.scrollHeight > entry.clientHeight + 1);
+  expect(overflowing, `${label} reads without any internal scrolling`).toEqual([]);
+}
+
+test('owns the whole viewport on a mobile first load', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
 
   const onboarding = page.getByRole('region', { name: 'Introducción al mapa comunitario' });
   await expect(onboarding).toBeVisible();
-  const card = onboarding.locator('.onboarding-card');
-  const cardBox = await card.boundingBox();
-  expect(cardBox).not.toBeNull();
-  expect(cardBox?.x).toBeGreaterThanOrEqual(0);
-  expect((cardBox?.x ?? 0) + (cardBox?.width ?? 0)).toBeLessThanOrEqual(390);
-  // The card floats above the peek sheet: the grip stays visible and tappable.
-  const grip = page.locator('#grip');
-  await expect(grip).toBeVisible();
-  const gripBox = await grip.boundingBox();
-  expect(gripBox).not.toBeNull();
-  expect(cardBox?.y ?? 0).toBeLessThan(gripBox?.y ?? 0);
-  await expect(page.locator('#identity-toggle')).toBeVisible();
+
+  const report = await measureOwnership(page);
+  // A section before the map, not a card inside it.
+  expect(report.overlay).toEqual({ x: 0, y: 0, width: 390, height: 844 });
+  expect(report.scrollWidth).toBeLessThanOrEqual(390);
+  expect(report.scrollHeight).toBeLessThanOrEqual(844);
+  // Map, rail and zoom are all unreachable until the visitor finishes or skips.
+  expect(report.blocked.map((entry) => entry.targetable)).toEqual([false, false, false]);
+  expect(report.nextReachable).toBe(true);
+  // The permanent plate is behind the layer now, so the integrated legal line
+  // is what carries the non-official naming through the mobile first run.
+  expect(report.legalPresent).toBe(true);
+  expect(report.legalTargetable).toBe(true);
+  await expect(onboarding.locator('.onboarding-legal')).toContainText('Sedapal');
+  await expect(onboarding.locator('.onboarding-legal')).toContainText('Luz del Sur');
+
+  // A single stacked column on mobile: the illustration sits above the copy.
+  expect(report.figure).not.toBeNull();
+  expect(report.title).not.toBeNull();
+  expect(report.title!.y).toBeGreaterThanOrEqual(report.figure!.y + report.figure!.height);
 });
+
+for (const [width, height] of [[390, 844], [360, 640]] as const) {
+  test(`reads every step without internal scrolling at ${width}x${height}`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await page.goto('/');
+
+    const onboarding = page.getByRole('region', { name: 'Introducción al mapa comunitario' });
+    await expect(onboarding).toBeVisible();
+
+    for (let step = 1; step <= 4; step += 1) {
+      if (step > 1) await onboarding.getByRole('button', { name: 'Siguiente' }).click();
+      await expect(onboarding.locator('.onboarding-progress')).toContainText(`Paso ${step} de 4`);
+      await assertNavigationReachable(page);
+      await assertNoInternalScroll(page, `step ${step} at ${width}x${height}`);
+    }
+  });
+}
+
+/**
+ * The four assets are not one shape — `3onboard.webp` is 1080x810 while the
+ * other three are 810x1080 — so the figure has to be the standard, not the
+ * image: one box per step, identical on every step, with the artwork contained
+ * inside it and never cropped.
+ */
+async function measureFigureBox(page: Page): Promise<{ width: number; height: number }> {
+  return page.evaluate(() => {
+    const figure = document.querySelector('.onboarding-figure');
+    if (!figure) return { width: -1, height: -1 };
+    const rect = figure.getBoundingClientRect();
+    return { width: Math.round(rect.width), height: Math.round(rect.height) };
+  });
+}
+
+for (const [label, width, height] of [['mobile', 390, 844], ['desktop', 1440, 900]] as const) {
+  test(`renders every ${label} step illustration into the same box`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await page.goto('/');
+
+    const onboarding = page.getByRole('region', { name: 'Introducción al mapa comunitario' });
+    await expect(onboarding).toBeVisible();
+
+    const boxes: { width: number; height: number }[] = [];
+    for (let step = 1; step <= 4; step += 1) {
+      if (step > 1) await onboarding.getByRole('button', { name: 'Siguiente' }).click();
+      await expect(onboarding.locator('.onboarding-progress')).toContainText(`Paso ${step} de 4`);
+      boxes.push(await measureFigureBox(page));
+    }
+
+    expect(boxes[0]!.width, 'the illustration box has a real size').toBeGreaterThan(0);
+    expect(boxes[0]!.height, 'the illustration box has a real size').toBeGreaterThan(0);
+    expect(boxes, `every ${label} step shares one illustration footprint`)
+      .toEqual([boxes[0], boxes[0], boxes[0], boxes[0]]);
+
+    // Contained, never cropped: the rendered image fits inside the shared box.
+    const fits = await page.evaluate(() => {
+      const img = document.querySelector<HTMLImageElement>('.onboarding-figure img');
+      const figure = document.querySelector('.onboarding-figure');
+      if (!img || !figure) return false;
+      const a = img.getBoundingClientRect();
+      const b = figure.getBoundingClientRect();
+      return a.width <= b.width + 1 && a.height <= b.height + 1
+        && getComputedStyle(img).objectFit === 'contain';
+    });
+    expect(fits, 'the artwork is contained inside the shared box, not cropped').toBe(true);
+  });
+}
 
 /**
  * Desktop ownership probe: the overlay must be the whole viewport, nothing
@@ -446,19 +558,25 @@ for (const [width, height] of [[1440, 900], [900, 844]] as const) {
   });
 }
 
-test('keeps the onboarding reachable above an opened rail on mobile', async ({ page }) => {
+test('hands the mobile map back intact once the first run ends', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
 
   const onboarding = page.getByRole('region', { name: 'Introducción al mapa comunitario' });
   await expect(onboarding).toBeVisible();
 
-  // The card is a first-run teaching layer: it may sit above the opened sheet,
-  // but skipping stays one tap away and the layer itself keeps the sheet taps
-  // flowing around the card.
-  await page.locator('#grip').click();
-  await expect(page.locator('#grip')).toHaveAttribute('aria-expanded', 'true');
-  await expect(onboarding).toBeVisible();
+  // The sheet is behind the section, so its grip is not tappable during the
+  // first run — the onboarding is a step before the map, not a layer over it.
+  const gripReachable = (): Promise<boolean> => page.evaluate(() => {
+    const grip = document.querySelector<HTMLButtonElement>('#grip');
+    if (!grip) return false;
+    const rect = grip.getBoundingClientRect();
+    const target = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return target instanceof Element && (target === grip || grip.contains(target));
+  });
+  expect(await gripReachable(), 'the peek sheet stays behind the first-run section').toBe(false);
+
+  // Skip stays one tap away throughout.
   const skip = onboarding.getByRole('button', { name: 'Omitir' });
   await expect(skip).toBeVisible();
   const skipReachable = await page.evaluate(() => {
@@ -471,8 +589,12 @@ test('keeps the onboarding reachable above an opened rail on mobile', async ({ p
   expect(skipReachable).toBe(true);
   await skip.click();
   await expect(onboarding).toBeHidden();
-  // Skipping the onboarding never collapses the sheet state underneath it.
+
+  // Ending the first run hands the whole map surface back at once.
+  expect(await gripReachable(), 'the grip is tappable as soon as the section closes').toBe(true);
+  await page.locator('#grip').click();
   await expect(page.locator('#grip')).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('#identity-toggle')).toBeVisible();
 });
 
 /**
@@ -659,7 +781,7 @@ async function measureClearance(page: Page): Promise<ClearanceReport> {
   });
 }
 
-test('keeps the map controls targetable and the attribution clear on every mobile step', async ({ page }) => {
+test('keeps the map behind the section on every mobile step', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
 
@@ -674,16 +796,14 @@ test('keeps the map controls targetable and the attribution clear on every mobil
     // in its initial (pre-activation) state.
     await assertNavigationReachable(page);
 
-    const report = await measureClearance(page);
-    expect(report.cardFound, `step ${step} renders its card`).toBe(true);
+    // Nothing the section covers answers a pointer, on any step: the map is
+    // waiting behind it, not competing with it.
+    const report = await measureOwnership(page);
+    expect(report.overlay, `step ${step} owns the viewport`).toEqual({ x: 0, y: 0, width: 390, height: 844 });
     expect(
-      report.controlsTargetable,
-      `step ${step} keeps zoom and locate controls targetable`,
-    ).toEqual([true, true, true]);
-    expect(
-      report.attributionClear,
-      `step ${step} keeps the card clear of the attribution`,
-    ).toBe(true);
+      report.blocked.map((entry) => entry.targetable),
+      `step ${step} keeps the map, rail and zoom behind the section`,
+    ).toEqual([false, false, false]);
   }
 });
 
@@ -766,6 +886,12 @@ test('keeps the mobile clearance contract when returning to the map', async ({ p
 test('keeps the permanent marker and the map controls clear of each other on mobile', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
+
+  // The first-run section owns the viewport, so the marker is only on the map
+  // surface once the flow ends.
+  const onboarding = page.getByRole('region', { name: 'Introducción al mapa comunitario' });
+  await onboarding.getByRole('button', { name: 'Omitir' }).click();
+  await expect(onboarding).toBeHidden();
 
   // The marker is permanent, so it must actually be reachable, and the controls
   // it shares the top band with must be really targetable — a hit-test at each
