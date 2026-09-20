@@ -664,7 +664,23 @@ import { siteNotice, unofficialNotice } from '../content.js';
        * one step each, and the fade duration mirrors `--onboarding-fade`.
        */
       const ONBOARDING_FADE_MS = 160;
+      /**
+       * Queued *destinations*, not deltas. The drain has to take a move off the
+       * queue before it can await the fade, so a queue of deltas stops
+       * describing where the flow is heading the moment a move is in flight —
+       * the delta is gone and `onboardingIndex` has not caught up yet.
+       */
       const onboardingMoveQueue: number[] = [];
+      /**
+       * The step the visitor has already asked for, updated synchronously by
+       * `moveOnboarding` and only reached by `onboardingIndex` once the fades
+       * and the illustration decode have finished. Every decision about what a
+       * control should do next reads this; only rendering reads the settled
+       * index. Deciding on the settled one is what let a fast tap on the last
+       * step queue a move the drain then discarded, leaving the card over the
+       * map.
+       */
+      let onboardingPendingIndex = 0;
       let onboardingMoving = false;
       let onboardingClosing = false;
       /**
@@ -776,7 +792,11 @@ import { siteNotice, unofficialNotice } from '../content.js';
         skip.addEventListener('click', () => closeOnboarding('skipped'));
         prev.addEventListener('click', () => moveOnboarding(-1));
         next.addEventListener('click', () => {
-          if (onboardingIndex === onboardingSteps.length - 1) { closeOnboarding('completed'); return; }
+          // Against the *pending* step, never the settled one: during a fade the
+          // settled index still names the step being left, and deciding on it
+          // sends the finishing tap into the move queue, where the drain drops
+          // it — the card stays over the map on the last step.
+          if (onboardingPendingIndex === onboardingSteps.length - 1) { closeOnboarding('completed'); return; }
           moveOnboarding(1);
         });
         activate.addEventListener('click', () => {
@@ -840,9 +860,12 @@ import { siteNotice, unofficialNotice } from '../content.js';
       }
 
       function moveOnboarding(delta: number): void {
-        const target = Math.min(Math.max(onboardingIndex + delta, 0), onboardingSteps.length - 1);
-        if (target === onboardingIndex) return;
-        onboardingMoveQueue.push(delta);
+        const target = Math.min(Math.max(onboardingPendingIndex + delta, 0), onboardingSteps.length - 1);
+        // Already heading for that edge: queueing this move would only give the
+        // drain something to discard.
+        if (target === onboardingPendingIndex) return;
+        onboardingPendingIndex = target;
+        onboardingMoveQueue.push(target);
         void drainOnboardingMoves();
       }
 
@@ -858,8 +881,7 @@ import { siteNotice, unofficialNotice } from '../content.js';
         const card = onboardingParts.stage.parentElement;
         const animated = card !== null && !prefersReducedMotion();
         while (onboardingMoveQueue.length > 0 && !onboardingClosing) {
-          const delta = onboardingMoveQueue.shift() as number;
-          const target = Math.min(Math.max(onboardingIndex + delta, 0), onboardingSteps.length - 1);
+          const target = onboardingMoveQueue.shift() as number;
           if (target === onboardingIndex) continue;
           if (animated && card) {
             card.dataset.fade = 'out';
@@ -918,6 +940,7 @@ import { siteNotice, unofficialNotice } from '../content.js';
           onboarding.replaceChildren();
           onboardingBuilt = false;
           onboardingIndex = 0;
+          onboardingPendingIndex = 0;
           onboardingMoveQueue.length = 0;
           onboardingClosing = false;
           onboardingLocationShown = false;
@@ -1236,8 +1259,13 @@ import { siteNotice, unofficialNotice } from '../content.js';
       .onboarding-figure {
         display: flex; align-items: center; justify-content: center;
         /* `max-height` is the give: a cramped phone shrinks the artwork rather
-         * than pushing prose behind a scrollbar. */
-        width: 100%; height: 34dvh; max-height: 100%; min-height: 0; margin: 0 0 .5rem;
+         * than pushing prose behind a scrollbar. The height is shared by every
+         * step on purpose — three of the four assets are portrait (810x1080)
+         * and one is landscape (1080x810), so only a fixed box keeps the
+         * footprint from jumping. Growing step 1 alone would break that, so the
+         * box itself carries the 10%: 34dvh -> 37.4dvh, taken out of the slack
+         * the stage already had above and below the artwork on every step. */
+        width: 100%; height: 37.4dvh; max-height: 100%; min-height: 0; margin: 0 0 .5rem;
       }
       .onboarding-figure img { width: 100%; height: 100%; object-fit: contain; }
       .onboarding-title {

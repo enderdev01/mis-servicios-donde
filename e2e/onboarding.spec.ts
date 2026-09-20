@@ -313,6 +313,49 @@ test('stays closed after completing every step', async ({ page }) => {
   await expect(page.getByRole('region', { name: 'Introducción al mapa comunitario' })).toBeHidden();
 });
 
+/*
+ * The finishing tap used to be decided against the settled step index while a
+ * move was still fading, so a visitor tapping faster than one fade cycle had
+ * their last tap turned into a move the drain then discarded. The card stayed
+ * on the last step with "Empezar a usar el mapa" already showing, and the fixed
+ * overlay stayed over the map: tapping through the flow left the map invisible.
+ * Both cadences below finish in exactly one tap per step.
+ */
+test('finishes on the last tap when the steps are tapped faster than the fade', async ({ page }) => {
+  await page.goto('/');
+
+  const onboarding = page.getByRole('region', { name: 'Introducción al mapa comunitario' });
+  await expect(onboarding).toBeVisible();
+
+  // Four taps, four steps, no waiting for the fades in between. The fourth is
+  // the finisher even though the third step's move has not settled yet.
+  const card = onboarding.locator('.onboarding-card');
+  for (let tap = 0; tap < 4; tap += 1) await card.getByRole('button').last().click();
+
+  await expect(onboarding).toBeHidden();
+  await expect(page.getByRole('status')).toContainText('No hay cortes reportados en este momento.');
+  // Completion is what persisted, so the map is not re-covered on the next visit.
+  await page.reload();
+  await expect(page.getByRole('region', { name: 'Introducción al mapa comunitario' })).toBeHidden();
+});
+
+test('finishes when every tap lands in the same tick', async ({ page }) => {
+  await page.goto('/');
+
+  const onboarding = page.getByRole('region', { name: 'Introducción al mapa comunitario' });
+  await expect(onboarding).toBeVisible();
+
+  // The hardest cadence there is: four synchronous activations, none of which
+  // lets a single fade start. Intent still has to be counted one step per tap.
+  await page.evaluate(() => {
+    const next = document.querySelector<HTMLButtonElement>('.onboarding-primary');
+    for (let tap = 0; tap < 4; tap += 1) next?.click();
+  });
+
+  await expect(onboarding).toBeHidden();
+  await expect(page.locator('#outage-map')).toBeVisible();
+});
+
 test('closes with Escape and keeps the map useful after skipping', async ({ page }) => {
   await page.goto('/');
 
@@ -457,6 +500,27 @@ for (const [label, width, height] of [['mobile', 390, 844], ['desktop', 1440, 90
     expect(fits, 'the artwork is contained inside the shared box, not cropped').toBe(true);
   });
 }
+
+/*
+ * The mobile illustration read small: three of the four assets are portrait, so
+ * `object-fit: contain` inside a short, full-width box left the artwork
+ * height-limited with dead space either side. The box carries the size, not the
+ * individual step, so growing it is what makes step 1 bigger without breaking
+ * the one-footprint contract the test above holds.
+ */
+test('gives the mobile illustration the taller shared box', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+
+  const onboarding = page.getByRole('region', { name: 'Introducción al mapa comunitario' });
+  await expect(onboarding).toBeVisible();
+
+  const { height } = await measureFigureBox(page);
+  // 37.4dvh — 10% up from the 34dvh it used to be. Measured as a share of the
+  // viewport so the assertion survives a different phone size.
+  expect(height / 844).toBeGreaterThan(0.36);
+  expect(height / 844).toBeLessThan(0.39);
+});
 
 /**
  * Desktop ownership probe: the overlay must be the whole viewport, nothing
