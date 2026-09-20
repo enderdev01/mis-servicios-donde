@@ -8,7 +8,7 @@ import pg from 'pg';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { AlertsService } from '../src/alerts/alerts.service.js';
+import { AlertsService, dispatchCycleDelayMs } from '../src/alerts/alerts.service.js';
 import { ConsensusService } from '../src/consensus/consensus.service.js';
 import { AppModule } from '../src/app.module.js';
 
@@ -210,5 +210,61 @@ describe('remediation verification coverage', () => {
     await database.query('UPDATE "OutageEpisode" SET "expiresAt" = CURRENT_TIMESTAMP - INTERVAL \'1 second\' WHERE "service" = \'water\'');
     await consensus.expireStaleEpisodes();
     expect((await database.query('SELECT * FROM "AlertIntent" WHERE "status" <> \'cancelled\'')).rowCount).toBe(2);
+  });
+});
+
+describe('dispatch wake budget', () => {
+  let app: INestApplication;
+  let database: pg.Pool;
+  let alerts: AlertsService;
+
+  beforeAll(async () => {
+    process.env.DATABASE_URL = databaseUrl;
+    process.env.ALERT_DISPATCH_ENABLED = 'true';
+    database = new pg.Pool({ connectionString: databaseUrl });
+    await database.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
+    const migrationsDirectory = new URL('../prisma/migrations/', import.meta.url);
+    for (const entry of (await readdir(migrationsDirectory)).sort()) {
+      await database.query(await readFile(new URL(`../prisma/migrations/${entry}/migration.sql`, import.meta.url), 'utf8'));
+    }
+    await database.query(`INSERT INTO "PilotZone" ("slug", "name", "approved", "boundary") VALUES
+      ('wake-central', 'Wake Central', true, '{"minLatitude": -12.1, "maxLatitude": -12.0, "minLongitude": -77.1, "maxLongitude": -77.0}')`);
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    app = moduleRef.createNestApplication();
+    await app.init();
+    alerts = app.get(AlertsService);
+  });
+
+  afterAll(async () => {
+    delete process.env.ALERT_DISPATCH_ENABLED;
+    await app?.close();
+    await database?.end();
+  });
+
+  it('reports a claimable row skipped by SKIP LOCKED as due now so the worker wakes at the dispatch interval, not the idle interval', async () => {
+    const zone = await database.query<{ id: string }>('SELECT "id" FROM "PilotZone" WHERE "slug" = \'wake-central\'');
+    const episode = await database.query<{ id: string }>(
+      `INSERT INTO "OutageEpisode" ("zoneId", "h3Cell", "service", "provider", "expiresAt")
+       VALUES ($1, '898e62c0cdbffff', 'water', 'sedapal', CURRENT_TIMESTAMP + INTERVAL '6 hours') RETURNING "id"`,
+      [zone.rows[0]?.id],
+    );
+    await database.query(
+      `INSERT INTO "AlertIntent" ("episodeId", "kind", "content") VALUES ($1, 'OPENED', $2)`,
+      [episode.rows[0]?.id, 'Corte de agua en Central. Información sobre cortes generada por la comunidad, no oficial.'],
+    );
+
+    const holder = await database.connect();
+    try {
+      await holder.query('BEGIN');
+      const locked = await holder.query<{ id: string }>('SELECT "id" FROM "AlertIntent" WHERE "episodeId" = $1 FOR UPDATE', [episode.rows[0]?.id]);
+      expect(locked.rows).toHaveLength(1);
+
+      const summary = await alerts.dispatchPending();
+      expect(summary).toEqual({ claimedWork: false, nextDueInSeconds: 1 });
+      expect(dispatchCycleDelayMs(summary, 30_000, 1_800_000)).toBe(30_000);
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      holder.release();
+    }
   });
 });

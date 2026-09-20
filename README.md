@@ -103,8 +103,9 @@ Do not commit `.env` or secret values. Supply values through the process environ
 | `ALERT_DISPATCH_ENABLED` | delivering alerts | Must be exactly `true` to attempt Telegram delivery. Disabling it cancels pending and retryable intents. |
 | `RETENTION_WORKER_ENABLED` | scheduled retention | Must be exactly `true` to run cleanup at the next midnight in Lima and then daily. |
 | `H3_RESOLUTION` | intake and public map | Integer from `0` through `15`. There is no code default: while it is missing or invalid, intake refuses every report and the public map publishes nothing. |
-| `ALERT_DISPATCH_INTERVAL_SECONDS` | optional | How often the dispatch worker polls the outbox. Positive integer, defaults to `30`. |
-| `EPISODE_EXPIRY_INTERVAL_SECONDS` | optional | How often the expiry worker closes elapsed episodes. Positive integer, defaults to `300`. |
+| `ALERT_DISPATCH_INTERVAL_SECONDS` | optional | Shortest wait between dispatch cycles; the worker may wait longer when the outbox has nothing due. Positive integer, defaults to `30`. See [Database wake pattern](#database-wake-pattern) before deploying this default. |
+| `ALERT_DISPATCH_IDLE_INTERVAL_SECONDS` | optional | Longest wait between dispatch cycles when the outbox has nothing due; set it above the provider's idle-suspend window. Positive integer, defaults to `1800`. See [Database wake pattern](#database-wake-pattern). |
+| `EPISODE_EXPIRY_INTERVAL_SECONDS` | optional | How often the expiry worker closes elapsed episodes. Positive integer, defaults to `300`. See [Database wake pattern](#database-wake-pattern). |
 | `DB_POOL_MAX` | optional | Maximum PostgreSQL connections per API instance; defaults to `10`. |
 | `DB_IDLE_TIMEOUT_MS` | optional | Time before an idle PostgreSQL connection closes; defaults to `30000`. |
 | `DB_CONNECTION_TIMEOUT_MS` | optional | Maximum time to establish a PostgreSQL connection; defaults to `5000`. |
@@ -141,11 +142,31 @@ The API process starts three workers. Each re-arms only after its previous cycle
 
 | Worker | Starts when | Cycle |
 |---|---|---|
-| Alert dispatch | always | Claims due intents and delivers them while `ALERT_DISPATCH_ENABLED=true`; cancels pending and retryable intents while it is not. |
+| Alert dispatch | always | Claims due intents and delivers them while `ALERT_DISPATCH_ENABLED=true`; cancels pending and retryable intents while it is not. Sleeps between the dispatch interval and the idle interval depending on what the outbox needs (see [Database wake pattern](#database-wake-pattern)). |
 | Episode expiry | always | Closes episodes whose lifetime elapsed. Public reads already hide them by expiry, so this only materialises that closure. |
 | Retention cleanup | `RETENTION_WORKER_ENABLED=true` | Deletes records past their retention window. |
 
-> **Enable dispatch before intake.** The dispatch worker runs continuously and its disabled branch cancels pending intents. If intake is enabled first, every episode that opens before dispatch is enabled has its alert cancelled within one cycle, and that alert is not recoverable.
+> **Enable dispatch before intake.** The dispatch worker runs continuously and its disabled branch cancels pending intents. If intake is enabled first, every episode that opens before dispatch is enabled has its alert cancelled at the worker's next wake — at most one idle interval later, 30 minutes with the defaults — and that alert is not recoverable.
+
+#### Database wake pattern
+
+Both always-on workers query the database on a timer, and the API process is long-running. A short interval keeps the database awake: with the original default `ALERT_DISPATCH_INTERVAL_SECONDS=30` the dispatch worker queried the outbox twice a minute, so a managed provider that suspends an idle compute after a few minutes of inactivity never reached that window.
+
+The dispatch worker no longer polls on one fixed interval. Each cycle reports what the outbox needs, and the worker schedules its next wake between two bounds, `ALERT_DISPATCH_INTERVAL_SECONDS` (default `30`) and `ALERT_DISPATCH_IDLE_INTERVAL_SECONDS` (default `1800`, 30 minutes):
+
+- The cycle claimed work: wake again after the dispatch interval, so an in-progress incident keeps its dispatch latency.
+- Intents exist but none is due yet (a retry backoff or an abandoned lease): wake when the earliest one becomes due.
+- Nothing is due: wake after the idle interval.
+
+The wait is never shorter than the dispatch interval, and the dispatch interval wins unconditionally: when `ALERT_DISPATCH_IDLE_INTERVAL_SECONDS` is configured below `ALERT_DISPATCH_INTERVAL_SECONDS`, the effective idle ceiling is the dispatch interval for every cycle (with a one-time warning naming both variables) rather than the shorter configured value being allowed to shorten the wait. A retry can never be lost to an unbounded wait. An outbox that stays empty therefore wakes once per idle interval — or once per dispatch interval when the idle interval is configured below it — instead of twice a minute, and the database can finally reach its suspend window.
+
+That cost was real and it hides well. A provider that suspends after five minutes and meters a monthly compute-hour allowance will exhaust it while the application looks idle. On providers that also expose database branching, the deployment step that creates a branch per preview then fails, which surfaces to a reader as a generic `500` from every database-backed endpoint — not as a deployment error anyone would connect to the database.
+
+Keep `ALERT_DISPATCH_INTERVAL_SECONDS` short for incident latency; the wake budget belongs to the idle interval. Set `ALERT_DISPATCH_IDLE_INTERVAL_SECONDS` above the suspend window and never equal to it: five minutes against a five-minute window still keeps the compute awake. Set both in the deployment environment, not in the repository: the suspend window is a property of the provider you deploy to, and a value committed to the repository would silently govern every environment, including ones that suspend differently.
+
+The remaining trade-off is bounded: an opening alert created while the worker sleeps waits until the next wake, so an alert can be delayed by up to one idle interval (30 minutes with the default) instead of one dispatch interval. That is minor next to the episode time scales already in force (`OUTAGE_QUORUM_WINDOW_MINUTES` defaults to 60 minutes and `OUTAGE_EPISODE_LIFETIME_HOURS` to 6); lower `ALERT_DISPATCH_IDLE_INTERVAL_SECONDS` when alert latency matters more than compute, keeping it above the suspend window. Retention cleanup is unaffected because it is gated and runs daily.
+
+On the free plan, also stop preview deployments from creating their own database branch. Point previews at the shared development branch; otherwise every preview holds compute active against the same allowance as the deployed environment. Delete the branches that accumulated before the change, then verify the fix with one preview deployment by checking two things: the database branch count no longer grows by one per deployment, and the deployment log no longer contains a branch-creation step.
 
 ## Privacy and retention
 
