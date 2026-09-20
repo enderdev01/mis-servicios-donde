@@ -501,6 +501,27 @@ for (const [label, width, height] of [['mobile', 390, 844], ['desktop', 1440, 90
   });
 }
 
+/*
+ * The mobile illustration read small: three of the four assets are portrait, so
+ * `object-fit: contain` inside a short, full-width box left the artwork
+ * height-limited with dead space either side. The box carries the size, not the
+ * individual step, so growing it is what makes step 1 bigger without breaking
+ * the one-footprint contract the test above holds.
+ */
+test('gives the mobile illustration the taller shared box', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+
+  const onboarding = page.getByRole('region', { name: 'Introducción al mapa comunitario' });
+  await expect(onboarding).toBeVisible();
+
+  const { height } = await measureFigureBox(page);
+  // 37.4dvh — 10% up from the 34dvh it used to be. Measured as a share of the
+  // viewport so the assertion survives a different phone size.
+  expect(height / 844).toBeGreaterThan(0.36);
+  expect(height / 844).toBeLessThan(0.39);
+});
+
 /**
  * Desktop ownership probe: the overlay must be the whole viewport, nothing
  * behind it may answer a pointer, the composition must not overflow, and the
