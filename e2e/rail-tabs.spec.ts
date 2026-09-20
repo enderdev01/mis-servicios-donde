@@ -15,10 +15,25 @@ import { asReturningVisitor, expect, test } from './fixtures.js';
 const MOBILE = { width: 390, height: 844 };
 const DESKTOP = { width: 1280, height: 900 };
 
-/** Opens the mobile sheet, which starts in its peek state. */
+/**
+ * Opens the mobile sheet and waits for it to finish rising. `aria-expanded`
+ * flips synchronously while the `.42s` transform is still running, so any
+ * assertion about where something sits on screen has to wait for the slide to
+ * settle — otherwise it measures the sheet mid-flight.
+ */
 async function openSheet(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Ver el panel' }).click();
   await expect(page.locator('#grip')).toHaveAttribute('aria-expanded', 'true');
+  // Wait for the `.42s` transform to reach its resting identity matrix. Polling
+  // the sheet's top edge for two equal reads is not enough: the transition may
+  // not have started yet when the first pair is taken, and the loop then exits
+  // at the peek position — which passes alone and fails under load.
+  await expect
+    .poll(async () => page.evaluate(() => {
+      const rail = document.getElementById('rail');
+      return rail ? getComputedStyle(rail).transform : 'missing';
+    }))
+    .toMatch(/^(none|matrix\(1, 0, 0, 1, 0, 0\))$/);
 }
 
 /**
@@ -78,6 +93,67 @@ test('splits the mobile panel into a report tab and a reports tab', async ({ pag
   await report.click();
   await expect(page.locator('#report-form')).toBeVisible();
   await expect(page.locator('#map-legend')).toBeHidden();
+});
+
+/*
+ * The tabs alone did not finish the job. The shared header still carried 67px
+ * of framing onto the path to the primary action, so the report tab needed
+ * 526px of a 489px sheet and "Enviar reporte" sat below the fold — the exact
+ * overload the split was meant to end. The lede is not deleted (a visitor who
+ * skipped the onboarding has no other place to learn the confirmation rule); it
+ * shows on the reports tab, where "sin confirmar" actually appears.
+ */
+test('fits the whole report form without scrolling the mobile sheet', async ({ page }) => {
+  await asReturningVisitor(page);
+  await page.setViewportSize(MOBILE);
+  await page.goto('/');
+  await openSheet(page);
+
+  const fits = await page.evaluate(() => {
+    const body = document.getElementById('rail-body')!;
+    return { scroll: body.scrollHeight, client: body.clientHeight };
+  });
+  expect(fits.scroll, 'the report tab does not scroll').toBeLessThanOrEqual(fits.client);
+
+  // The submit button is the thing that used to be unreachable.
+  const submit = page.locator('#submit');
+  await expect(submit).toBeVisible();
+  const probe = await submit.evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    const rail = document.getElementById('rail')!;
+    return {
+      onScreen: rect.bottom <= window.innerHeight + 1,
+      submitBottom: Math.round(rect.bottom),
+      viewport: window.innerHeight,
+      railTop: Math.round(rail.getBoundingClientRect().top),
+      railState: rail.getAttribute('data-state'),
+      hit: hit instanceof Element ? `${hit.tagName}#${hit.id}` : null,
+    };
+  });
+  expect(probe, 'the submit button is on screen and tappable without scrolling')
+    .toMatchObject({ onScreen: true, hit: 'BUTTON#submit' });
+
+  // The rule is not lost — it moved to the tab where it applies.
+  await expect(page.locator('.lede')).toBeHidden();
+  await page.getByRole('tab', { name: 'Reportes' }).click();
+  await expect(page.locator('.lede')).toBeVisible();
+  await expect(page.locator('.lede')).toContainText('Tres vecinos distintos');
+});
+
+test('keeps the lede under the heading on desktop', async ({ page }) => {
+  await asReturningVisitor(page);
+  await page.setViewportSize(DESKTOP);
+  await page.goto('/');
+
+  // The desktop rail is one column with room for everything, so the mobile
+  // relocation must not reach it.
+  await expect(page.locator('.lede')).toBeVisible();
+  const placement = await page.evaluate(() => {
+    const lede = document.querySelector('.lede')!;
+    return { parent: lede.parentElement?.id, previous: lede.previousElementSibling?.tagName };
+  });
+  expect(placement).toEqual({ parent: 'rail-body', previous: 'H1' });
 });
 
 test('keeps the sheet headline and the question outside the tabs', async ({ page }) => {
