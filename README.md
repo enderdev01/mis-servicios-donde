@@ -43,7 +43,7 @@ docker/              local PostgreSQL initialization
 
 ## Quick start
 
-1. Use Node.js 22 or later and install locked dependencies:
+1. Use Node.js 22.22.3 or later and install locked dependencies:
 
    ```sh
    npm ci
