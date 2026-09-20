@@ -103,8 +103,8 @@ Do not commit `.env` or secret values. Supply values through the process environ
 | `ALERT_DISPATCH_ENABLED` | delivering alerts | Must be exactly `true` to attempt Telegram delivery. Disabling it cancels pending and retryable intents. |
 | `RETENTION_WORKER_ENABLED` | scheduled retention | Must be exactly `true` to run cleanup at the next midnight in Lima and then daily. |
 | `H3_RESOLUTION` | intake and public map | Integer from `0` through `15`. There is no code default: while it is missing or invalid, intake refuses every report and the public map publishes nothing. |
-| `ALERT_DISPATCH_INTERVAL_SECONDS` | optional | How often the dispatch worker polls the outbox. Positive integer, defaults to `30`. |
-| `EPISODE_EXPIRY_INTERVAL_SECONDS` | optional | How often the expiry worker closes elapsed episodes. Positive integer, defaults to `300`. |
+| `ALERT_DISPATCH_INTERVAL_SECONDS` | optional | How often the dispatch worker polls the outbox. Positive integer, defaults to `30`. See [Database wake pattern](#database-wake-pattern) before deploying this default. |
+| `EPISODE_EXPIRY_INTERVAL_SECONDS` | optional | How often the expiry worker closes elapsed episodes. Positive integer, defaults to `300`. See [Database wake pattern](#database-wake-pattern). |
 | `DB_POOL_MAX` | optional | Maximum PostgreSQL connections per API instance; defaults to `10`. |
 | `DB_IDLE_TIMEOUT_MS` | optional | Time before an idle PostgreSQL connection closes; defaults to `30000`. |
 | `DB_CONNECTION_TIMEOUT_MS` | optional | Maximum time to establish a PostgreSQL connection; defaults to `5000`. |
@@ -146,6 +146,18 @@ The API process starts three workers. Each re-arms only after its previous cycle
 | Retention cleanup | `RETENTION_WORKER_ENABLED=true` | Deletes records past their retention window. |
 
 > **Enable dispatch before intake.** The dispatch worker runs continuously and its disabled branch cancels pending intents. If intake is enabled first, every episode that opens before dispatch is enabled has its alert cancelled within one cycle, and that alert is not recoverable.
+
+#### Database wake pattern
+
+Both always-on workers query the database on a timer, and the API process is long-running. A short interval therefore keeps the database permanently awake: with the default `ALERT_DISPATCH_INTERVAL_SECONDS=30` the dispatch worker queries the outbox every cycle, so a managed provider that suspends an idle compute after a few minutes of inactivity never reaches that window.
+
+That cost is real and it hides well. A provider that suspends after five minutes and meters a monthly compute-hour allowance will exhaust it while the application looks idle. On providers that also expose database branching, the deployment step that creates a branch per preview then fails, which surfaces to a reader as a generic `500` from every database-backed endpoint — not as a deployment error anyone would connect to the database.
+
+Set the interval **above** the suspend window, never equal to it: five minutes against a five-minute window still keeps the compute awake. `ALERT_DISPATCH_INTERVAL_SECONDS=600` leaves margin on a provider that suspends after five minutes.
+
+The trade-off is bounded and small: an alert can be delayed by up to one interval, which is minor next to the episode time scales already in force (`OUTAGE_QUORUM_WINDOW_MINUTES` defaults to 60 minutes and `OUTAGE_EPISODE_LIFETIME_HOURS` to 6). Retention cleanup is unaffected because it is gated and runs daily.
+
+Preview deployments must not each create their own database branch. Point previews at the shared development branch; otherwise every preview holds compute active against the same allowance as the deployed environment.
 
 ## Privacy and retention
 
