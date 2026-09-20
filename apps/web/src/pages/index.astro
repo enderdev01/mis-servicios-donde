@@ -36,10 +36,36 @@ import { siteNotice, unofficialNotice } from '../content.js';
       <div id="outage-map" aria-label="Mapa de zonas con cortes confirmados. Los mismos cortes aparecen como texto en el panel."></div>
     </div>
 
-    <header class="plate" id="site-identity">
-      <p class="wordmark">Mis Servicios</p>
-      <p class="unofficial" role="note">{siteNotice} {unofficialNotice}</p>
-    </header>
+    <!--
+      Identity: a permanent marker, not a standing plate. The two-line notice
+      used to sit over the map on every viewport and buy its space out of the
+      Leaflet control strip; here it collapses behind one compact control that
+      still carries the non-official framing ("No oficial") at all times, and
+      expands the wordmark and the full naming on demand. The wrapper is what
+      `watchNoticeClearance` measures, so the controls follow whichever state
+      is showing.
+    -->
+    <div class="identity" id="identity">
+      <button
+        type="button"
+        class="identity-toggle"
+        id="identity-toggle"
+        aria-expanded="false"
+        aria-controls="site-identity"
+        aria-label="Aviso: información no oficial"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 11.2v4.8" />
+          <path d="M12 7.9h.01" />
+        </svg>
+        <span>No oficial</span>
+      </button>
+      <header class="plate" id="site-identity" hidden>
+        <p class="wordmark">Mis Servicios</p>
+        <p class="unofficial" role="note">{siteNotice} {unofficialNotice}</p>
+      </header>
+    </div>
 
     <!--
       First-run onboarding: on mobile a floating teaching card over the map, on
@@ -551,28 +577,69 @@ import { siteNotice, unofficialNotice } from '../content.js';
       }
 
       /*
-       * The permanent plate is fixed above the garden, so the map controls it
-       * overlaps would be unreachable. The top-right Leaflet controls only
-       * need to drop below the plate when the plate can actually reach them
-       * horizontally: on small screens it always does, on a wide desktop it
-       * ends far left of the controls. The measurement keeps following text
-       * wrapping and viewport changes through a ResizeObserver.
+       * The identity is fixed above the garden, so the map controls it overlaps
+       * would be unreachable. The top-right Leaflet controls only need to drop
+       * below it when it can actually reach them horizontally — collapsed it is
+       * a narrow badge that never does, expanded on a small screen it always
+       * does, and on a wide desktop the panel still ends far left of the strip.
+       * Measuring the wrapper (badge + panel) makes the clearance follow the
+       * expand/collapse as well as text wrapping and viewport changes, through
+       * one ResizeObserver.
        */
+      function updateNoticeClearance(): void {
+        if (!identity) return;
+        const identityRect = identity.getBoundingClientRect();
+        const controlStrip = 66; // 34px locate control + 10px inset + breathing room
+        if (identityRect.right + controlStrip >= window.innerWidth) {
+          const clearance = identityRect.height + 20; // .75rem offset + .5rem gap
+          document.documentElement.style.setProperty('--notice-clearance', `${Math.ceil(clearance)}px`);
+        } else {
+          document.documentElement.style.removeProperty('--notice-clearance');
+        }
+      }
+
       function watchNoticeClearance(): void {
-        if (!plate) return;
-        const update = (): void => {
-          const plateRect = plate.getBoundingClientRect();
-          const controlStrip = 66; // 34px locate control + 10px inset + breathing room
-          if (plateRect.right + controlStrip >= window.innerWidth) {
-            const clearance = plateRect.height + 20; // .75rem offset + .5rem gap
-            document.documentElement.style.setProperty('--notice-clearance', `${Math.ceil(clearance)}px`);
-          } else {
-            document.documentElement.style.removeProperty('--notice-clearance');
-          }
-        };
-        update();
-        if (typeof ResizeObserver === 'function') new ResizeObserver(update).observe(plate);
-        else window.addEventListener('resize', update);
+        if (!identity) return;
+        updateNoticeClearance();
+        // The observer covers text wrapping and viewport changes; expanding and
+        // collapsing recompute synchronously in `setIdentityExpanded`, so the
+        // controls never spend a frame underneath the panel.
+        if (typeof ResizeObserver === 'function') new ResizeObserver(updateNoticeClearance).observe(identity);
+        else window.addEventListener('resize', updateNoticeClearance);
+      }
+
+      /*
+       * The identity panel is collapsed by default on every viewport: the
+       * standing marker is the control itself, and the wordmark plus the full
+       * unofficial naming are one activation away. The control, Escape and a
+       * pointer outside all collapse it; Escape hands focus back to the control
+       * so the panel is never a dead end. Escape here runs before the
+       * onboarding's own handler and stops it when the panel is the thing that
+       * is open, so the innermost open surface always owns the key.
+       */
+      function setIdentityExpanded(expanded: boolean): void {
+        if (!plate || !identityToggle) return;
+        plate.hidden = !expanded;
+        identityToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        updateNoticeClearance();
+      }
+
+      function watchIdentityPanel(): void {
+        if (!identity || !plate || !identityToggle) return;
+        identityToggle.addEventListener('click', () => {
+          setIdentityExpanded(identityToggle.getAttribute('aria-expanded') !== 'true');
+        });
+        document.addEventListener('keydown', (event) => {
+          if (event.key !== 'Escape' || plate.hidden) return;
+          event.stopImmediatePropagation();
+          setIdentityExpanded(false);
+          identityToggle.focus({ preventScroll: true });
+        });
+        document.addEventListener('pointerdown', (event) => {
+          if (plate.hidden) return;
+          if (event.target instanceof Node && identity.contains(event.target)) return;
+          setIdentityExpanded(false);
+        });
       }
 
       /*
@@ -585,6 +652,8 @@ import { siteNotice, unofficialNotice } from '../content.js';
        */
       const onboarding = $<HTMLElement>('#onboarding');
       const plate = $<HTMLElement>('#site-identity');
+      const identity = $<HTMLElement>('#identity');
+      const identityToggle = $<HTMLButtonElement>('#identity-toggle');
       let onboardingIndex = 0;
       let onboardingFocusReturn: HTMLElement | null = null;
       let onboardingBuilt = false;
@@ -882,6 +951,7 @@ import { siteNotice, unofficialNotice } from '../content.js';
       populateProviderFilter();
       renderProviderFields();
       watchNoticeClearance();
+      watchIdentityPanel();
 
       /*
        * Input modality gates the presentational focus ring: the onboarding's
@@ -990,6 +1060,14 @@ import { siteNotice, unofficialNotice } from '../content.js';
        */
       .leaflet-tile-pane { filter: saturate(.35) brightness(1.06) contrast(.95); }
       .leaflet-container { background: var(--ground); font-family: inherit; }
+      /*
+       * The identity is fixed above the garden, so any control it overlapped
+       * would be unreachable. Collapsed it is a small badge far from the
+       * top-right strip, so the strip keeps Leaflet's own inset; expanded, JS
+       * measures the panel and publishes `--notice-clearance` to drop the
+       * controls below it. Both stay visible at once; neither is weakened.
+       */
+      .leaflet-top { top: var(--notice-clearance, .625rem); }
       .cell { filter: drop-shadow(0 1px 5px rgb(22 32 26 / .28)); }
 
       .leaflet-control-zoom a,
@@ -1025,14 +1103,41 @@ import { siteNotice, unofficialNotice } from '../content.js';
         35% { box-shadow: 0 0 0 9px rgb(10 108 156 / 0), 0 2px 8px rgb(22 32 26 / .38); }
       }
 
-      /* The unofficial plate is static and permanent: it never yields the map. */
+      /*
+       * The identity is permanent, but compact: the collapsed control is the
+       * standing non-official marker (icon + "No oficial", ~90px) and the full
+       * notice is one activation away inside the panel. Nothing here ever
+       * auto-hides — collapsing is always the visitor's own action.
+       */
+      .identity {
+        position: fixed; top: .75rem; left: .75rem; z-index: 700;
+        display: flex; flex-direction: column; align-items: flex-start; gap: .4rem;
+        max-width: min(44rem, calc(100% - 1.5rem));
+      }
+      .identity-toggle {
+        display: inline-flex; align-items: center; gap: .32rem;
+        padding: .36rem .64rem .36rem .48rem;
+        border: 1px solid var(--line); border-radius: 99px;
+        background: rgb(251 252 249 / .93); backdrop-filter: blur(10px);
+        box-shadow: 0 4px 14px rgb(22 32 26 / .14);
+        color: var(--muted); font: inherit; font-size: .74rem; font-weight: 800;
+        line-height: 1; white-space: nowrap; cursor: pointer;
+      }
+      .identity-toggle svg { width: 15px; height: 15px; flex: none; color: var(--ink); }
+      .identity-toggle:hover,
+      .identity-toggle[aria-expanded='true'] { color: var(--ink); border-color: var(--muted); }
+
+      /* The expanded panel: the wordmark and the full unofficial naming. */
       .plate {
-        position: fixed; inset: .75rem .75rem auto; z-index: 700; max-width: 44rem;
         display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem 1rem;
         padding: .7rem 1rem; border: 1px solid var(--line); border-radius: 14px;
         background: rgb(251 252 249 / .93); backdrop-filter: blur(10px);
         box-shadow: 0 6px 22px rgb(22 32 26 / .14);
+        animation: identity-open .2s cubic-bezier(.16, 1, .3, 1);
       }
+      /* An author `display` beats the UA `[hidden]` rule, so restate it. */
+      .plate[hidden] { display: none; }
+      @keyframes identity-open { from { opacity: 0; transform: translateY(-4px); } }
       .wordmark { margin: 0; font-family: Comfortaa, Nunito, sans-serif; font-weight: 700; font-size: 1.05rem; letter-spacing: -.01em; }
       .unofficial { margin: 0; color: var(--muted); font-size: .74rem; line-height: 1.4; max-width: 62ch; text-wrap: pretty; }
 
@@ -1336,7 +1441,6 @@ import { siteNotice, unofficialNotice } from '../content.js';
 
       @media (max-width: 55.99rem) {
         .leaflet-bottom { bottom: 9.6rem; }
-        .leaflet-top { top: var(--notice-clearance, 4rem); }
         /*
          * Location step (activation control present, or denial/success copy
          * inserted): this step carries the activate control plus live-region
@@ -1352,9 +1456,6 @@ import { siteNotice, unofficialNotice } from '../content.js';
       }
 
       @media (min-width: 56rem) {
-        /* The plate shares the top edge with the controls on wide desktops;
-         * JS sets `--notice-clearance` only when it can actually reach them. */
-        .leaflet-top { top: var(--notice-clearance, .625rem); }
         .rail {
           top: 0; right: auto; bottom: 0; width: 25rem; max-height: none;
           border-top: 0; border-right: 1px solid var(--line); border-radius: 0;
@@ -1363,7 +1464,7 @@ import { siteNotice, unofficialNotice } from '../content.js';
         .grip { display: none; }
         .answer { padding: 1.9rem 1.5rem .25rem; font-size: 1.1rem; }
         .rail-body { padding: .6rem 1.5rem 2rem; }
-        .plate { left: 26.5rem; }
+        .identity { left: 26.5rem; }
         /*
          * Desktop first-load contract: the onboarding is a full-screen
          * experience that owns the whole viewport from the moment the page

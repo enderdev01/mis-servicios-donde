@@ -1,4 +1,4 @@
-import { asReturningVisitor, expect, test } from './fixtures.js';
+import { asReturningVisitor, expect, revealNotice, test } from './fixtures.js';
 
 /** Real resolution-9 indices over the pilot area. */
 const limaCell = '898e62c0cdbffff';
@@ -141,6 +141,7 @@ test('keeps the map empty and the notice standing when nothing is reported', asy
 
   await expect(page.getByRole('status')).toContainText('No hay cortes reportados en este momento.');
   await expect(page.locator(mapBlobs)).toHaveCount(0);
+  await revealNotice(page);
   await expect(page.getByRole('note')).toContainText('no oficial');
 });
 

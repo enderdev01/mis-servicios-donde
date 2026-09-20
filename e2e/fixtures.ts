@@ -14,6 +14,18 @@ export async function asReturningVisitor(page: Page): Promise<void> {
 }
 
 /**
+ * The permanent unofficial notice is collapsed behind the identity control, so
+ * any spec that reads the notice itself has to open the panel first. The
+ * control's accessible name is stable across both states — `aria-expanded`
+ * carries the state, not the label.
+ */
+export const noticeControl = 'Aviso: información no oficial';
+
+export async function revealNotice(page: Page): Promise<void> {
+  await page.getByRole('button', { name: noticeControl }).click();
+}
+
+/**
  * Keeps every test hermetic. A developer's local API on :3000 is proxied into
  * `vite preview` through `server.proxy`, so an unmocked `/v1` call would answer
  * with real rows and quietly rewrite these assertions. Routes a test registers

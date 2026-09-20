@@ -39,7 +39,9 @@ test('walks a first visit through four illustrated steps', async ({ page }) => {
   await expect(onboarding.locator('.onboarding-figure img')).toBeVisible();
   await expect(onboarding.locator('.onboarding-figure img')).toHaveAttribute('alt', /vecinos/);
   await expect(onboarding.locator('.onboarding-progress')).toContainText('Paso 1 de 4');
-  await expect(page.getByRole('note')).toContainText('No es un canal oficial de Sedapal, Luz del Sur ni de ningún proveedor.');
+  // The permanent plate is collapsed behind the identity control, so during the
+  // first run the naming is carried by the onboarding's own integrated line.
+  await expect(onboarding.locator('.onboarding-legal')).toContainText('No es un canal oficial de Sedapal, Luz del Sur ni de ningún proveedor.');
 
   await expect(onboarding.getByRole('button', { name: 'Anterior' })).toBeDisabled();
   await onboarding.getByRole('button', { name: 'Siguiente' }).click();
@@ -341,7 +343,7 @@ test('keeps the peek sheet and grip clear on mobile', async ({ page }) => {
   const gripBox = await grip.boundingBox();
   expect(gripBox).not.toBeNull();
   expect(cardBox?.y ?? 0).toBeLessThan(gripBox?.y ?? 0);
-  await expect(page.locator('#site-identity')).toBeVisible();
+  await expect(page.locator('#identity-toggle')).toBeVisible();
 });
 
 /**
@@ -639,7 +641,9 @@ async function measureClearance(page: Page): Promise<ClearanceReport> {
       return target instanceof Element && (target === element || element.contains(target));
     };
     const card = document.querySelector('.onboarding-card');
-    const notice = document.querySelector('.unofficial');
+    // The permanent marker is the collapsed identity control; the full notice
+    // lives inside the panel it expands.
+    const notice = document.querySelector('#identity-toggle');
     const attribution = document.querySelector('.leaflet-control-attribution');
     const controls = ['.leaflet-control-zoom-in', '.leaflet-control-zoom-out', '.locate-control']
       .map((selector) => document.querySelector(selector));
@@ -756,17 +760,17 @@ test('keeps the mobile clearance contract when returning to the map', async ({ p
   const report = await measureClearance(page);
   expect(report.cardFound).toBe(false);
   expect(report.controlsTargetable, 'zoom and locate controls stay targetable after skip').toEqual([true, true, true]);
-  expect(report.noticeTargetable, 'the permanent notice stays readable after skip').toBe(true);
+  expect(report.noticeTargetable, 'the permanent marker stays reachable after skip').toBe(true);
 });
 
-test('keeps the permanent notice and the map controls clear of each other on mobile', async ({ page }) => {
+test('keeps the permanent marker and the map controls clear of each other on mobile', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
 
-  // The notice is permanent, so it must actually be readable, and the controls
-  // it shares the corner with must be really targetable — a hit-test at each
+  // The marker is permanent, so it must actually be reachable, and the controls
+  // it shares the top band with must be really targetable — a hit-test at each
   // centre catches occlusion that a plain visibility check misses.
-  const notice = page.getByRole('note');
+  const notice = page.locator('#identity-toggle');
   await expect(notice).toBeVisible();
   const report = await page.evaluate(() => {
     const isOccluded = (element: Element): boolean => {
@@ -774,7 +778,7 @@ test('keeps the permanent notice and the map controls clear of each other on mob
       const target = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
       return !(target instanceof Element && (target === element || element.contains(target)));
     };
-    const notice = document.querySelector('.unofficial');
+    const notice = document.querySelector('#identity-toggle');
     const controls = ['.leaflet-control-zoom-in', '.locate-control'].map((selector) => document.querySelector(selector));
     return {
       controlsOccluded: controls.map((control) => control === null || isOccluded(control)),
