@@ -1,4 +1,17 @@
-import { test as base, expect } from '@playwright/test';
+import { type Page, test as base, expect } from '@playwright/test';
+
+/**
+ * Marks this browser context as a returning visitor before any page script
+ * runs: the first-run onboarding stays closed and `page.goto('/')` lands the
+ * test directly on the live map. The record mirrors the versioned contract in
+ * `apps/web/src/onboarding.ts` (key `mis-servicios:onboarding`, version 1).
+ * Onboarding tests must not use this — they exist to exercise the first run.
+ */
+export async function asReturningVisitor(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    localStorage.setItem('mis-servicios:onboarding', JSON.stringify({ version: 1, status: 'completed' }));
+  });
+}
 
 /**
  * Keeps every test hermetic. A developer's local API on :3000 is proxied into
