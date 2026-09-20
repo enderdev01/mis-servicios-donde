@@ -1,5 +1,5 @@
 import { type Page } from '@playwright/test';
-import { asReturningVisitor, expect, test } from './fixtures.js';
+import { asReturningVisitor, expect, revealNotice, test } from './fixtures.js';
 
 async function grantLocation(page: Page): Promise<void> {
   await page.addInitScript(() => {
@@ -35,6 +35,7 @@ test('submits a report and renders only the public aggregate after confirmation'
   await page.getByLabel('Ver servicio').selectOption('water');
   await expect(page.getByRole('status')).toContainText('1 confirmado.');
   await expect(page.getByLabel('Cortes confirmados por zona')).toContainText('Corte de agua en una zona cercana');
+  await revealNotice(page);
   await expect(page.getByRole('note')).toContainText('No es un canal oficial de Sedapal, Luz del Sur ni de ningún proveedor.');
   await expect(page.locator('body')).not.toContainText('8999999999fffff');
   await expect(page.locator('body')).not.toContainText('never-public');
