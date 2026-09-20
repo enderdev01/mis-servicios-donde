@@ -93,10 +93,28 @@ import { siteNotice, unofficialNotice } from '../content.js';
         <h1>¿Es solo tu casa?</h1>
         <p class="lede">Tres vecinos distintos tienen que reportar lo mismo para que un corte quede confirmado. Hasta entonces aparece como "sin confirmar".</p>
 
-        <ul id="map-legend" class="legend"></ul>
+        <!--
+          Mobile only: the sheet used to stack both panels into one scroll —
+          filters, the outage list and the whole report form — so the form sat
+          entirely below the fold. Below 56rem these two controls show one panel
+          at a time; from 56rem the rail is a 25rem column with room for both,
+          so `watchRailTabs` strips the tab semantics and CSS shows both again.
+          The control is inert markup until that watcher wires it, which keeps
+          the no-JS render complete rather than half a tab strip.
+        -->
+        <div class="rail-tabs" id="rail-tabs" hidden>
+          <button type="button" class="rail-tab" id="rail-tab-report" data-panel="report-panel">Reportar</button>
+          <button type="button" class="rail-tab" id="rail-tab-reports" data-panel="reports-panel">Reportes</button>
+        </div>
 
-        <section class="panel" aria-labelledby="near-heading">
+        <!--
+          The legend lives with the outage list: it decodes the same
+          confirmation levels the list and the map blobs use, and pairing them
+          keeps the report tab down to the form alone.
+        -->
+        <section class="panel" id="reports-panel" aria-labelledby="near-heading">
           <h2 id="near-heading">Cortes cerca tuyo</h2>
+          <ul id="map-legend" class="legend"></ul>
           <div class="filters">
             <label class="filter">
               <span>Ver distrito</span>
@@ -125,7 +143,7 @@ import { siteNotice, unofficialNotice } from '../content.js';
           <button type="button" class="locate" id="locate" hidden>Activar mi ubicación</button>
         </section>
 
-        <section class="panel" aria-labelledby="report-heading">
+        <section class="panel" id="report-panel" aria-labelledby="report-heading">
           <h2 id="report-heading">Reportar un corte</h2>
           <p class="fine">Al enviar el reporte, tu ubicación exacta se manda una sola vez: el servidor la convierte en una zona amplia y la descarta. No se guarda ni se muestra.</p>
           <form id="report-form" novalidate>
@@ -187,6 +205,8 @@ import { siteNotice, unofficialNotice } from '../content.js';
       const reportState = $<HTMLElement>('#report-state');
       const locate = $<HTMLButtonElement>('#locate');
       const rail = $<HTMLElement>('#rail');
+      const railBody = $<HTMLElement>('#rail-body');
+      const railTabs = $<HTMLElement>('#rail-tabs');
       const grip = $<HTMLButtonElement>('#grip');
       const gripLabel = $<HTMLElement>('#grip-label');
       const answer = $<HTMLElement>('#answer');
@@ -576,6 +596,112 @@ import { siteNotice, unofficialNotice } from '../content.js';
         rail?.setAttribute('data-state', state);
         grip?.setAttribute('aria-expanded', state === 'open' ? 'true' : 'false');
         if (gripLabel) gripLabel.textContent = state === 'open' ? 'Ocultar el panel' : 'Ver el panel';
+      }
+
+      /*
+       * The mobile rail used to stack both panels into one scroll: the framing,
+       * the legend, three filters, the outage list and the whole report form —
+       * 743px of content in a 489px sheet on a 390px-wide phone, with the form
+       * entirely below the fold. Below 56rem the two panels become two tabs
+       * ("Reportar" first, "Reportes" second) so one set of options shows at a
+       * time. From 56rem the rail is a 25rem column that fits both, so the
+       * layout there is untouched.
+       *
+       * The semantics are applied and removed with the layout, never left
+       * standing: a tablist whose tabs are `display: none` would still announce
+       * a two-tab widget on desktop, where there is nothing to switch. So the
+       * whole contract — the roles, `aria-selected`, `aria-controls`, the
+       * roving tabindex and the panels' own tabpanel roles — is added when the
+       * narrow layout applies and stripped when it stops applying.
+       */
+      const railTabButtons = railTabs
+        ? Array.from(railTabs.querySelectorAll<HTMLButtonElement>('.rail-tab'))
+        : [];
+      const railTabPanels = railTabButtons.map((tab) => $<HTMLElement>(`#${tab.dataset.panel}`));
+      /*
+       * Each panel's own heading, captured before any tab semantics touch it.
+       * Leaving the split has to put back exactly what was there rather than
+       * re-derive it from the panel's position — the tabs are ordered
+       * "Reportar" first while the panels keep their reading order, so the two
+       * lists do not line up and deriving it silently crosses the labels.
+       */
+      const railPanelLabels = railTabPanels.map((panel) => panel?.getAttribute('aria-labelledby') ?? null);
+
+      function setRailTab(selected: number): void {
+        railTabButtons.forEach((tab, index) => {
+          const isSelected = index === selected;
+          tab.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+          // Roving tabindex: one Tab press leaves the strip for the panel it
+          // opened, and the arrow keys are what move between the tabs.
+          tab.tabIndex = isSelected ? 0 : -1;
+          const panel = railTabPanels[index];
+          if (panel) panel.dataset.tabState = isSelected ? 'active' : 'inactive';
+        });
+      }
+
+      function applyRailTabs(on: boolean): void {
+        if (!railTabs || !railBody || railTabButtons.length === 0) return;
+        railTabs.hidden = !on;
+        if (on) {
+          railBody.dataset.tabs = 'on';
+          railTabs.setAttribute('role', 'tablist');
+          railTabs.setAttribute('aria-label', 'Secciones del panel');
+          railTabButtons.forEach((tab, index) => {
+            tab.setAttribute('role', 'tab');
+            const panel = railTabPanels[index];
+            if (!panel) return;
+            tab.setAttribute('aria-controls', panel.id);
+            panel.setAttribute('role', 'tabpanel');
+            panel.setAttribute('aria-labelledby', tab.id);
+            // A panel that scrolls has to be focusable, or a keyboard visitor
+            // reaching it from the tab cannot scroll it.
+            panel.tabIndex = 0;
+          });
+          // Whichever tab was already selected survives a rotation back to
+          // narrow; a first application starts on "Reportar".
+          setRailTab(Math.max(railTabButtons.findIndex((tab) => tab.getAttribute('aria-selected') === 'true'), 0));
+          return;
+        }
+        // Wide again: hand both panels back, with no tab semantics left over.
+        delete railBody.dataset.tabs;
+        railTabs.removeAttribute('role');
+        railTabs.removeAttribute('aria-label');
+        railTabButtons.forEach((tab, index) => {
+          tab.removeAttribute('role');
+          tab.removeAttribute('aria-controls');
+          tab.tabIndex = -1;
+          const panel = railTabPanels[index];
+          if (!panel) return;
+          panel.removeAttribute('role');
+          // `aria-labelledby` pointed at the tab; the section's own heading
+          // labels it again, exactly as it did before the split existed.
+          const label = railPanelLabels[index];
+          if (label) panel.setAttribute('aria-labelledby', label);
+          else panel.removeAttribute('aria-labelledby');
+          panel.removeAttribute('tabindex');
+          delete panel.dataset.tabState;
+        });
+      }
+
+      function watchRailTabs(): void {
+        if (!railTabs || !railBody || railTabButtons.length === 0) return;
+        railTabButtons.forEach((tab, index) => {
+          tab.addEventListener('click', () => setRailTab(index));
+          tab.addEventListener('keydown', (event) => {
+            const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+            if (step === 0) return;
+            event.preventDefault();
+            const next = (index + step + railTabButtons.length) % railTabButtons.length;
+            setRailTab(next);
+            railTabButtons[next]?.focus();
+          });
+        });
+        // The same 56rem boundary the stylesheet uses. Keeping it in one
+        // `matchMedia` means a rotation or a resized window moves the ARIA and
+        // the layout together instead of leaving one of them behind.
+        const narrow = matchMedia('(max-width: 55.99rem)');
+        applyRailTabs(narrow.matches);
+        narrow.addEventListener('change', (event) => applyRailTabs(event.matches));
       }
 
       /*
@@ -976,6 +1102,7 @@ import { siteNotice, unofficialNotice } from '../content.js';
       renderProviderFields();
       watchNoticeClearance();
       watchIdentityPanel();
+      watchRailTabs();
 
       /*
        * Input modality gates the presentational focus ring: the onboarding's
@@ -1414,6 +1541,47 @@ import { siteNotice, unofficialNotice } from '../content.js';
 
       .rail-body { overflow-y: auto; padding: .6rem 1.15rem calc(1.4rem + env(safe-area-inset-bottom)); }
 
+      /*
+       * The mobile tab strip: two halves of one track, so the split reads as a
+       * single control rather than two loose buttons. Hidden until
+       * `watchRailTabs` wires it, and dropped entirely from 56rem — the desktop
+       * rail shows both panels at once, as it always has.
+       */
+      .rail-tabs {
+        display: grid; grid-template-columns: 1fr 1fr; gap: .25rem;
+        margin: 0 0 1.15rem; padding: .25rem;
+        border: 1px solid var(--line); border-radius: 99px; background: var(--ground);
+      }
+      .rail-tabs[hidden] { display: none; }
+      .rail-tab {
+        padding: .5rem .75rem; border: 0; border-radius: 99px;
+        background: none; color: var(--muted);
+        font: inherit; font-size: .87rem; font-weight: 700; cursor: pointer;
+        transition: background-color .18s ease, color .18s ease;
+      }
+      .rail-tab[aria-selected='true'] {
+        background: var(--surface); color: var(--ink);
+        box-shadow: 0 1px 3px rgb(22 32 26 / .12);
+      }
+      /*
+       * Only the selected tab is in the tab sequence; the arrow keys move
+       * between them. That is the tablist keyboard contract, and it keeps one
+       * Tab press moving from the strip into the panel it opened.
+       */
+      .rail-tab:focus-visible { outline: 2px solid var(--agua); outline-offset: -2px; }
+      /*
+       * The inactive panel is `display: none`, not `visibility` or a clip: it
+       * has to leave the accessibility tree and the tab sequence too, or the
+       * form the visitor cannot see still collects their Tab presses.
+       */
+      .rail-body[data-tabs='on'] > .panel[data-tab-state='inactive'] { display: none; }
+      /*
+       * The panels carry a rule on top to separate them from each other. Behind
+       * tabs only one shows at a time, directly under the strip, which already
+       * does that job — so the rule would just be a second line under a line.
+       */
+      .rail-body[data-tabs='on'] > .panel { padding-top: .25rem; border-top: 0; }
+
       h1 {
         margin: .1rem 0 .45rem; font-family: Comfortaa, Nunito, sans-serif; font-weight: 700;
         font-size: clamp(1.6rem, 5.2vw, 2.1rem); line-height: 1.1; letter-spacing: -.02em; text-wrap: balance;
@@ -1509,6 +1677,9 @@ import { siteNotice, unofficialNotice } from '../content.js';
         .grip { display: none; }
         .answer { padding: 1.9rem 1.5rem .25rem; font-size: 1.1rem; }
         .rail-body { padding: .6rem 1.5rem 2rem; }
+        /* The column has room for both panels, so the split never applies here.
+         * `watchRailTabs` drops the matching ARIA so the two agree. */
+        .rail-tabs { display: none; }
         .identity { left: 26.5rem; }
         /*
          * Desktop composition: the same owned viewport, laid out as a
