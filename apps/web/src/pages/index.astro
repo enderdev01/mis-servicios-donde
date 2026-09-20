@@ -743,6 +743,31 @@ import { siteNotice, unofficialNotice } from '../content.js';
         typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
       const waitForFade = (): Promise<void> =>
         new Promise((resolve) => window.setTimeout(resolve, ONBOARDING_FADE_MS));
+      /**
+       * Decoded-image cache shared by the eager preload and every step swap.
+       * Awaiting the same URL twice is free, and it lets a move hold the
+       * transparent slide until the next illustration is ready — without it the
+       * reused <img> keeps painting the previous bitmap while the new file is
+       * still in flight, which reads as the old image lingering after the fade.
+       */
+      const onboardingImageLoads = new Map<string, Promise<void>>();
+      function loadOnboardingImage(src: string): Promise<void> {
+        const cached = onboardingImageLoads.get(src);
+        if (cached) return cached;
+        const pending = new Promise<void>((resolve) => {
+          const probe = new Image();
+          probe.decoding = 'async';
+          probe.addEventListener('load', () => resolve(), { once: true });
+          probe.addEventListener('error', () => resolve(), { once: true });
+          probe.src = src;
+        });
+        onboardingImageLoads.set(src, pending);
+        return pending;
+      }
+      /** Warms the cache for every step at open, so swaps have nothing to wait for. */
+      function preloadOnboardingImages(): void {
+        for (const step of onboardingSteps) void loadOnboardingImage(step.image);
+      }
 
       function moveOnboarding(delta: number): void {
         const target = Math.min(Math.max(onboardingIndex + delta, 0), onboardingSteps.length - 1);
@@ -773,6 +798,13 @@ import { siteNotice, unofficialNotice } from '../content.js';
           }
           onboardingIndex = target;
           renderOnboardingStep();
+          // Hold the transparent slide until the new illustration is decoded,
+          // so the fade-in can never reveal the previous step's bitmap.
+          const step = onboardingSteps[target];
+          if (animated && step) {
+            await loadOnboardingImage(step.image);
+            if (onboardingClosing) break;
+          }
           if (animated && card) {
             card.removeAttribute('data-fade');
             await waitForFade();
@@ -837,6 +869,7 @@ import { siteNotice, unofficialNotice } from '../content.js';
         try { stored = localStorage.getItem(ONBOARDING_STORAGE_KEY); } catch { stored = null; }
         if (!shouldShowOnboarding(stored)) return;
         buildOnboarding();
+        preloadOnboardingImages();
         onboardingFocusReturn = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         onboarding.hidden = false;
         onboarding.focus({ preventScroll: true });

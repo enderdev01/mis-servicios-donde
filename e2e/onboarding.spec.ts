@@ -83,6 +83,32 @@ test('fades between steps and still lands on every step with rapid clicks', asyn
   await expect(page.locator('.onboarding-card[data-fade="out"]')).toHaveCount(0);
 });
 
+test('reveals the new illustration only once it is decoded', async ({ page }) => {
+  await page.goto('/');
+
+  const onboarding = page.getByRole('region', { name: 'Introducción al mapa comunitario' });
+  await expect(onboarding).toBeVisible();
+
+  // Every step illustration is fetched at open, so a move never has to wait on
+  // the network and the reused <img> is not left painting the previous bitmap.
+  await page.waitForFunction(() => {
+    const loaded = performance
+      .getEntriesByType('resource')
+      .filter((entry) => entry.name.includes('/onboarding/'));
+    return new Set(loaded.map((entry) => entry.name)).size >= 4;
+  });
+
+  await onboarding.getByRole('button', { name: 'Siguiente' }).click();
+  await expect(onboarding.locator('.onboarding-progress')).toContainText('Paso 2 de 4');
+  const image = await page.evaluate(() => {
+    const img = document.querySelector('.onboarding-figure img') as HTMLImageElement;
+    return { src: img.getAttribute('src'), complete: img.complete, naturalWidth: img.naturalWidth };
+  });
+  expect(image.src).toBe('/onboarding/2onboard.webp');
+  expect(image.complete).toBe(true);
+  expect(image.naturalWidth).toBeGreaterThan(0);
+});
+
 test('fades the surface out before entering the app', async ({ page }) => {
   await page.goto('/');
 
