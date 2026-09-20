@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures.js';
+import { asReturningVisitor, expect, test } from './fixtures.js';
 
 test('serves the static public foundation', async ({ request }) => {
   const response = await request.get('/');
@@ -7,6 +7,8 @@ test('serves the static public foundation', async ({ request }) => {
 });
 
 test('offers an unofficial filtered map and accessible report validation', async ({ page }) => {
+  // Returning-user state: this spec exercises the map and panel, not the first run.
+  await asReturningVisitor(page);
   await page.route('**/v1/cells?service=water', (route) => route.fulfill({ json: [{ h3Cell: '8999999999fffff', service: 'water', provider: 'sedapal', confirmed: true, reports: 3 }] }));
   await page.goto('/');
 
@@ -23,11 +25,15 @@ test('offers an unofficial filtered map and accessible report validation', async
   await expect(page.getByRole('alert')).toContainText('Elige al menos un servicio afectado.');
 });
 
-test('shows the identity notice before yielding the map after its timeout', async ({ page }) => {
+test('keeps the identity notice permanently visible in every state', async ({ page }) => {
+  await asReturningVisitor(page);
   await page.goto('/');
 
   const identity = page.locator('#site-identity');
   await expect(identity).toBeVisible();
   await expect(identity.getByRole('note')).toBeVisible();
-  await expect(identity).toBeHidden({ timeout: 5_000 });
+  // Past the old 3.5s auto-hide window: the notice now never yields the map.
+  await page.waitForTimeout(4_500);
+  await expect(identity).toBeVisible();
+  await expect(identity.getByRole('note')).toBeVisible();
 });

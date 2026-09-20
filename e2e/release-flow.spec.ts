@@ -1,5 +1,5 @@
 import { type Page } from '@playwright/test';
-import { expect, test } from './fixtures.js';
+import { asReturningVisitor, expect, test } from './fixtures.js';
 
 async function grantLocation(page: Page): Promise<void> {
   await page.addInitScript(() => {
@@ -11,6 +11,8 @@ async function grantLocation(page: Page): Promise<void> {
 }
 
 test('submits a report and renders only the public aggregate after confirmation', async ({ page }) => {
+  // Returning-user state: this spec exercises the report flow, not the first run.
+  await asReturningVisitor(page);
   let reported = false;
   await grantLocation(page);
   await page.route('**/v1/reports', async (route) => {
@@ -39,6 +41,7 @@ test('submits a report and renders only the public aggregate after confirmation'
 });
 
 test('keeps the browser private and actionable when rollout APIs are disabled', async ({ page }) => {
+  await asReturningVisitor(page);
   await grantLocation(page);
   await page.route('**/v1/cells', async (route) => route.fulfill({ json: [] }));
   await page.route('**/v1/reports', async (route) => route.fulfill({ status: 400, json: { code: 'report_unavailable' } }));

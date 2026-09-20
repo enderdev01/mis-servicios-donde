@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures.js';
+import { asReturningVisitor, expect, test } from './fixtures.js';
 
 /** Real resolution-9 indices over the pilot area. */
 const limaCell = '898e62c0cdbffff';
@@ -6,6 +6,8 @@ const anotherCell = '898e62c01afffff';
 const mapBlobs = '#outage-map .leaflet-overlay-pane path';
 
 test('draws one soft blob per reported cell without exposing the index', async ({ page }) => {
+  // Returning-user state: this spec exercises the map, not the first run.
+  await asReturningVisitor(page);
   await page.route('**/v1/cells', (route) => route.fulfill({
     json: [
       { h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true, reports: 3 },
@@ -21,6 +23,7 @@ test('draws one soft blob per reported cell without exposing the index', async (
 });
 
 test('unifies adjacent reports from the same service into one growing area', async ({ page }) => {
+  await asReturningVisitor(page);
   await page.route('**/v1/cells', (route) => route.fulfill({
     json: [
       { h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true, reports: 3 },
@@ -35,6 +38,7 @@ test('unifies adjacent reports from the same service into one growing area', asy
 });
 
 test('renders a pending report dashed and unconfirmed', async ({ page }) => {
+  await asReturningVisitor(page);
   await page.route('**/v1/cells', (route) => route.fulfill({
     json: [{ h3Cell: limaCell, service: 'electricity', provider: 'luz_del_sur', confirmed: false, reports: 1 }],
   }));
@@ -47,6 +51,7 @@ test('renders a pending report dashed and unconfirmed', async ({ page }) => {
 });
 
 test('keeps the outage area geographic while zooming in', async ({ page }) => {
+  await asReturningVisitor(page);
   await page.route('**/v1/cells', (route) => route.fulfill({
     json: [{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true, reports: 3 }],
   }));
@@ -63,6 +68,7 @@ test('keeps the outage area geographic while zooming in', async ({ page }) => {
 });
 
 test('repositions on the visitor instead of fitting the whole district', async ({ page }) => {
+  await asReturningVisitor(page);
   await page.context().grantPermissions(['geolocation'], { origin: 'http://127.0.0.1:4331' });
   await page.context().setGeolocation({ latitude: -12.0228, longitude: -77.0314 });
   await page.route('**/v1/zones', (route) => route.fulfill({
@@ -92,6 +98,7 @@ test('repositions on the visitor instead of fitting the whole district', async (
 });
 
 test('anchors the visitor own cell to the local position', async ({ page }) => {
+  await asReturningVisitor(page);
   await page.context().grantPermissions(['geolocation'], { origin: 'http://127.0.0.1:4331' });
   await page.context().setGeolocation({ latitude: -12.0464, longitude: -77.0428 });
   await page.route('**/v1/cells', (route) => route.fulfill({
@@ -101,6 +108,9 @@ test('anchors the visitor own cell to the local position', async ({ page }) => {
   await page.goto('/');
   const blob = page.locator(mapBlobs).first();
   await expect(blob).toBeVisible();
+  // Geolocation is never automatic: the visitor's dot appears only after the
+  // explicit locate action.
+  await page.locator('.locate-control').click();
   await expect(page.locator('.me span')).toBeVisible();
 
   await expect.poll(async () => {
@@ -114,6 +124,7 @@ test('anchors the visitor own cell to the local position', async ({ page }) => {
 });
 
 test('lists a malformed cell as text but refuses to map it', async ({ page }) => {
+  await asReturningVisitor(page);
   await page.route('**/v1/cells', (route) => route.fulfill({ json: [{ h3Cell: '8999999999fffff', service: 'water', provider: 'sedapal', confirmed: true, reports: 3 }] }));
 
   await page.goto('/');
@@ -123,6 +134,7 @@ test('lists a malformed cell as text but refuses to map it', async ({ page }) =>
 });
 
 test('keeps the map empty and the notice standing when nothing is reported', async ({ page }) => {
+  await asReturningVisitor(page);
   await page.route('**/v1/cells', (route) => route.fulfill({ json: [] }));
 
   await page.goto('/');
@@ -133,6 +145,7 @@ test('keeps the map empty and the notice standing when nothing is reported', asy
 });
 
 test('explains what each service colour means', async ({ page }) => {
+  await asReturningVisitor(page);
   await page.route('**/v1/cells', (route) => route.fulfill({ json: [] }));
 
   await page.goto('/');
@@ -141,6 +154,7 @@ test('explains what each service colour means', async ({ page }) => {
 });
 
 test('centres on a district and filters its reports', async ({ page }) => {
+  await asReturningVisitor(page);
   await page.route('**/v1/zones', (route) => route.fulfill({
     json: [
       { slug: 'rimac', name: 'Rímac', boundary: { minLatitude: -12.045, maxLatitude: -12.005, minLongitude: -77.05, maxLongitude: -77 } },
@@ -173,6 +187,7 @@ test('centres on a district and filters its reports', async ({ page }) => {
 });
 
 test('opens a modal with every stacked report when a cell is clicked', async ({ page }) => {
+  await asReturningVisitor(page);
   await page.route('**overpass-api.de/api/interpreter', (route) => route.fulfill({
     json: {
       elements: [
@@ -207,6 +222,7 @@ test('opens a modal with every stacked report when a cell is clicked', async ({ 
 });
 
 test('shows street analysis while nearby data is loading', async ({ page }) => {
+  await asReturningVisitor(page);
   let releaseLookup: () => void = () => {};
   const lookupReleased = new Promise<void>((resolve) => { releaseLookup = resolve; });
   await page.route('**overpass-api.de/api/interpreter', async (route) => {
