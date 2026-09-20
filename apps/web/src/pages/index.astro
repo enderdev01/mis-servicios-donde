@@ -1,5 +1,5 @@
 ---
-import { siteNotice } from '../content.js';
+import { siteNotice, unofficialNotice } from '../content.js';
 ---
 
 <!doctype html>
@@ -38,8 +38,21 @@ import { siteNotice } from '../content.js';
 
     <header class="plate" id="site-identity">
       <p class="wordmark">Mis Servicios</p>
-      <p class="unofficial" role="note">{siteNotice} No es un canal oficial de Sedapal, Luz del Sur ni de ningún proveedor.</p>
+      <p class="unofficial" role="note">{siteNotice} {unofficialNotice}</p>
     </header>
+
+    <!--
+      First-run onboarding: on mobile a floating teaching card over the map, on
+      desktop (>=56rem) a full-screen first-load experience that owns the whole
+      viewport — a two-column editorial composition (illustration + content)
+      that blocks pointer interaction with the map and rail behind it, with the
+      permanent non-official naming integrated on every step. No dialog
+      semantics are taken; focus moves to the card on open and returns where it
+      came from on close, and Escape closes it from anywhere. A successful
+      location activation never completes the flow: it shows a success state on
+      the location step, and only finishing step 4 persists completion.
+    -->
+    <div class="onboarding" id="onboarding" hidden role="region" aria-label="Introducción al mapa comunitario" tabindex="-1"></div>
 
     <aside class="rail" id="rail" data-state="peek">
       <button type="button" class="grip" id="grip" aria-expanded="false" aria-controls="rail-body">
@@ -86,7 +99,7 @@ import { siteNotice } from '../content.js';
 
         <section class="panel" aria-labelledby="report-heading">
           <h2 id="report-heading">Reportar un corte</h2>
-          <p class="fine">Tu ubicación exacta se usa una sola vez para agrupar el reporte en una zona amplia. No se guarda ni se muestra.</p>
+          <p class="fine">Al enviar el reporte, tu ubicación exacta se manda una sola vez: el servidor la convierte en una zona amplia y la descarta. No se guarda ni se muestra.</p>
           <form id="report-form" novalidate>
             <fieldset>
               <legend>¿Qué servicio?</legend>
@@ -132,6 +145,8 @@ import { siteNotice } from '../content.js';
         leadAnswer, loadingMessage, providerLabel, providerOptions, serviceStyles, sortByProximity, summarizeCells, toCellBlobs, toPublicCells, zoneBounds,
         type NearbyCell, type Provider, type PublicCell, type Service, type ZoneSummary,
       } from '../map.js';
+      import { ONBOARDING_STORAGE_KEY, persistOnboardingStatus, shouldShowOnboarding } from '../onboarding.js';
+      import { onboardingSteps, locationSuccess, siteNotice, unofficialNotice } from '../content.js';
 
       const $ = <T extends Element>(selector: string): T | null => document.querySelector<T>(selector);
       const districtFilter = $<HTMLSelectElement>('#district-filter');
@@ -154,8 +169,6 @@ import { siteNotice } from '../content.js';
       const cellInfoStreets = $<HTMLElement>('#cell-info-streets');
       const cellInfoClose = $<HTMLButtonElement>('#cell-info-close');
       const providerFields = $<HTMLDivElement>('#provider-fields');
-      const siteIdentity = $<HTMLElement>('#site-identity');
-      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       const deviceId = (() => {
         const key = 'mis-servicios:device-id';
         const existing = localStorage.getItem(key);
@@ -173,24 +186,6 @@ import { siteNotice } from '../content.js';
       let myDistrictSlug: string | undefined;
       let painted: NearbyCell[] = [];
       let fetchedCells: PublicCell[] = [];
-
-      function hideSiteIdentity(): void {
-        if (!siteIdentity) return;
-        siteIdentity.hidden = true;
-        siteIdentity.setAttribute('aria-hidden', 'true');
-      }
-
-      if (siteIdentity) {
-        window.setTimeout(() => {
-          if (reducedMotion) {
-            hideSiteIdentity();
-            return;
-          }
-          siteIdentity.classList.add('is-dismissing');
-          siteIdentity.addEventListener('transitionend', hideSiteIdentity, { once: true });
-          window.setTimeout(hideSiteIdentity, 400);
-        }, 3_500);
-      }
 
       const icons: Record<Service, string> = {
         water: '<path d="M12 3.5c3.4 4 5.2 6.6 5.2 8.9a5.2 5.2 0 0 1-10.4 0c0-2.3 1.8-4.9 5.2-8.9Z"/>',
@@ -528,9 +523,11 @@ import { siteNotice } from '../content.js';
       /**
        * Denial is a first-class state, never an error: the map stays on the pilot
        * zone and the panel offers the permission again on the visitor's terms.
+       * The request itself is never automatic: it fires only from an explicit
+       * visitor action (onboarding activation, locate controls, report submit).
        */
-      function askPosition(): void {
-        if (!navigator.geolocation) { locate?.removeAttribute('hidden'); return; }
+      function askPosition(onSuccess?: () => void, onError?: () => void): void {
+        if (!navigator.geolocation) { locate?.removeAttribute('hidden'); onError?.(); return; }
         locate?.setAttribute('data-busy', 'true');
         navigator.geolocation.getCurrentPosition(
           (position) => {
@@ -539,9 +536,10 @@ import { siteNotice } from '../content.js';
             if (myDistrictSlug && districtFilter) districtFilter.value = myDistrictSlug;
             locate?.setAttribute('hidden', '');
             locate?.removeAttribute('data-busy');
+            onSuccess?.();
             void loadCells(true).then(centreOnMe);
           },
-          () => { locate?.removeAttribute('data-busy'); locate?.removeAttribute('hidden'); },
+          () => { locate?.removeAttribute('data-busy'); locate?.removeAttribute('hidden'); onError?.(); },
           { maximumAge: 60_000, timeout: 8_000 },
         );
       }
@@ -552,20 +550,271 @@ import { siteNotice } from '../content.js';
         if (gripLabel) gripLabel.textContent = state === 'open' ? 'Ocultar el panel' : 'Ver el panel';
       }
 
+      /*
+       * The permanent plate is fixed above the garden, so the map controls it
+       * overlaps would be unreachable. The top-right Leaflet controls only
+       * need to drop below the plate when the plate can actually reach them
+       * horizontally: on small screens it always does, on a wide desktop it
+       * ends far left of the controls. The measurement keeps following text
+       * wrapping and viewport changes through a ResizeObserver.
+       */
+      function watchNoticeClearance(): void {
+        if (!plate) return;
+        const update = (): void => {
+          const plateRect = plate.getBoundingClientRect();
+          const controlStrip = 66; // 34px locate control + 10px inset + breathing room
+          if (plateRect.right + controlStrip >= window.innerWidth) {
+            const clearance = plateRect.height + 20; // .75rem offset + .5rem gap
+            document.documentElement.style.setProperty('--notice-clearance', `${Math.ceil(clearance)}px`);
+          } else {
+            document.documentElement.style.removeProperty('--notice-clearance');
+          }
+        };
+        update();
+        if (typeof ResizeObserver === 'function') new ResizeObserver(update).observe(plate);
+        else window.addEventListener('resize', update);
+      }
+
+      /*
+       * First-run onboarding: four illustrated steps over the live map, rendered
+       * from one copy source (content.js). The layer is a region, not a dialog:
+       * the map stays usable around the card, and on mobile the card floats
+       * above the sheet (even opened) as a first-run teaching layer, so no
+       * focus is trapped and only the open-time focus move and close-time
+       * restore are managed.
+       */
+      const onboarding = $<HTMLElement>('#onboarding');
+      const plate = $<HTMLElement>('#site-identity');
+      let onboardingIndex = 0;
+      let onboardingFocusReturn: HTMLElement | null = null;
+      let onboardingBuilt = false;
+      /**
+       * Set once a location request succeeds while the onboarding is open.
+       * Success is a state on the location step, never a completion: the flow
+       * stays open, "Siguiente" keeps advancing, and only finishing step 4
+       * persists anything.
+       */
+      let onboardingLocationShown = false;
+      const onboardingParts = {
+        stage: document.createElement('div') as HTMLElement,
+        content: document.createElement('div') as HTMLElement,
+        figure: document.createElement('figure') as HTMLElement,
+        image: document.createElement('img') as HTMLImageElement,
+        title: document.createElement('h2') as HTMLElement,
+        body: document.createElement('p') as HTMLElement,
+        note: document.createElement('p') as HTMLElement,
+        success: document.createElement('p') as HTMLElement,
+        activate: document.createElement('button') as HTMLButtonElement,
+        prev: document.createElement('button') as HTMLButtonElement,
+        next: document.createElement('button') as HTMLButtonElement,
+        skip: document.createElement('button') as HTMLButtonElement,
+        progress: document.createElement('p') as HTMLElement,
+        dots: document.createElement('div') as HTMLElement,
+        legal: document.createElement('p') as HTMLElement,
+      };
+
+      function buildOnboarding(): void {
+        if (!onboarding || onboardingBuilt) return;
+        onboardingBuilt = true;
+        const card = document.createElement('div');
+        card.className = 'onboarding-card';
+        // The stage (illustration) and the content column let CSS compose a
+        // two-column editorial layout on desktop while the mobile card keeps
+        // stacking both vertically inside one floating card.
+        const stage = onboardingParts.stage;
+        stage.className = 'onboarding-stage';
+        const figure = onboardingParts.figure;
+        figure.className = 'onboarding-figure';
+        const image = onboardingParts.image;
+        image.decoding = 'async';
+        figure.append(image);
+        stage.append(figure);
+        const skip = onboardingParts.skip;
+        skip.type = 'button';
+        skip.className = 'onboarding-skip';
+        skip.textContent = 'Omitir';
+        const title = onboardingParts.title;
+        title.className = 'onboarding-title';
+        title.tabIndex = -1;
+        const head = document.createElement('div');
+        head.className = 'onboarding-head';
+        head.append(skip);
+        const body = onboardingParts.body;
+        body.className = 'onboarding-body';
+        const note = onboardingParts.note;
+        note.className = 'onboarding-note';
+        // A real polite live region: the element is always rendered and only
+        // its text changes, so screen readers announce the denial insertion.
+        // The empty state is styled away (no box) instead of display:none.
+        note.setAttribute('role', 'status');
+        note.setAttribute('aria-live', 'polite');
+        const success = onboardingParts.success;
+        success.className = 'onboarding-success';
+        success.tabIndex = -1;
+        // A real polite live region (never toggled hidden): the text change
+        // announces while the element is already in the accessibility tree.
+        success.setAttribute('role', 'status');
+        success.setAttribute('aria-live', 'polite');
+        const activate = onboardingParts.activate;
+        activate.type = 'button';
+        activate.className = 'onboarding-activate';
+        activate.textContent = 'Activar ubicación';
+        const legal = onboardingParts.legal;
+        legal.className = 'onboarding-legal';
+        legal.textContent = `${siteNotice} ${unofficialNotice}`;
+        const meta = document.createElement('div');
+        meta.className = 'onboarding-meta';
+        const dots = onboardingParts.dots;
+        dots.className = 'onboarding-dots';
+        dots.setAttribute('aria-hidden', 'true');
+        const progress = onboardingParts.progress;
+        progress.className = 'onboarding-progress';
+        meta.append(dots, progress);
+        const nav = document.createElement('div');
+        nav.className = 'onboarding-nav';
+        const prev = onboardingParts.prev;
+        prev.type = 'button';
+        prev.className = 'onboarding-ghost';
+        prev.textContent = 'Anterior';
+        const next = onboardingParts.next;
+        next.type = 'button';
+        next.className = 'onboarding-primary';
+        nav.append(prev, next);
+        // DOM order is focus order: the heading first, then the skip control
+        // right after it, so one forward Tab from the open-time focus (the step
+        // heading) reaches "Omitir". CSS `order` puts the head back on top
+        // visually without changing that forward order. The nav lives OUTSIDE
+        // the scrollable content column (a real footer, never a sticky overlay
+        // painted over copy): unfocusable elements (meta, legal) sit between
+        // it and the content in DOM order, so the forward Tab order is
+        // unchanged — title, skip, activate, then the two nav buttons.
+        const content = onboardingParts.content;
+        content.className = 'onboarding-content';
+        content.append(title, head, body, note, success, activate, meta, legal);
+        card.append(stage, content, nav);
+        onboarding.append(card);
+
+        skip.addEventListener('click', () => closeOnboarding('skipped'));
+        prev.addEventListener('click', () => moveOnboarding(-1));
+        next.addEventListener('click', () => {
+          if (onboardingIndex === onboardingSteps.length - 1) { closeOnboarding('completed'); return; }
+          moveOnboarding(1);
+        });
+        activate.addEventListener('click', () => {
+          if (activate.hasAttribute('data-busy')) return;
+          activate.setAttribute('data-busy', 'true');
+          askPosition(
+            () => {
+              activate.removeAttribute('data-busy');
+              // Success stays on the step: announce it, keep the flow open.
+              onboardingLocationShown = true;
+              onboardingParts.activate.hidden = true;
+              onboardingParts.note.textContent = '';
+              onboardingParts.success.textContent = `${locationSuccess.message}. ${locationSuccess.detail}`;
+              onboardingParts.success.focus({ preventScroll: true });
+            },
+            () => {
+              activate.removeAttribute('data-busy');
+              note.textContent = 'No pudimos obtener tu ubicación ahora. Puedes activarla después con el control del mapa o continuar sin ella.';
+            },
+          );
+        });
+      }
+
+      /*
+       * Escape closes the onboarding from anywhere: focus may sit on the map or
+       * the rail while the card is open, so the listener is global but only
+       * alive while the onboarding is open.
+       */
+      const onboardingEscape = (event: KeyboardEvent): void => {
+        if (event.key === 'Escape') { event.preventDefault(); closeOnboarding('skipped'); }
+      };
+
+      function moveOnboarding(delta: number): void {
+        onboardingIndex = Math.min(Math.max(onboardingIndex + delta, 0), onboardingSteps.length - 1);
+        renderOnboardingStep();
+      }
+
+      function renderOnboardingStep(): void {
+        const step = onboardingSteps[onboardingIndex];
+        if (!step) return;
+        onboardingParts.image.src = step.image;
+        onboardingParts.image.alt = step.alt;
+        onboardingParts.title.textContent = step.title;
+        onboardingParts.body.textContent = step.body;
+        onboardingParts.note.textContent = '';
+        // A completed activation is remembered for the visit: returning to the
+        // location step shows the success state again, without re-requesting.
+        const locationReady = step.id === 'location' && onboardingLocationShown;
+        onboardingParts.activate.hidden = step.id !== 'location' || onboardingLocationShown;
+        onboardingParts.success.textContent = locationReady ? `${locationSuccess.message}. ${locationSuccess.detail}` : '';
+        onboardingParts.prev.disabled = onboardingIndex === 0;
+        onboardingParts.next.textContent = onboardingIndex === onboardingSteps.length - 1 ? 'Empezar a usar el mapa' : 'Siguiente';
+        onboardingParts.progress.textContent = `Paso ${onboardingIndex + 1} de ${onboardingSteps.length}`;
+        onboardingParts.dots.replaceChildren(...onboardingSteps.map((_, index) => {
+          const dot = document.createElement('span');
+          if (index === onboardingIndex) dot.setAttribute('data-active', 'true');
+          return dot;
+        }));
+        onboardingParts.title.focus({ preventScroll: true });
+      }
+
+      function closeOnboarding(status: 'completed' | 'skipped'): void {
+        if (!onboarding || onboarding.hidden) return;
+        // Storage can be full or blocked (private mode); skipping must still work.
+        try { persistOnboardingStatus(localStorage, status); } catch { /* this visit simply replays next time */ }
+        onboarding.hidden = true;
+        document.removeEventListener('keydown', onboardingEscape);
+        onboarding.replaceChildren();
+        onboardingBuilt = false;
+        onboardingIndex = 0;
+        onboardingLocationShown = false;
+        onboardingFocusReturn?.focus({ preventScroll: true });
+        onboardingFocusReturn = null;
+      }
+
+      function startOnboarding(): void {
+        if (!onboarding) return;
+        let stored: string | null = null;
+        try { stored = localStorage.getItem(ONBOARDING_STORAGE_KEY); } catch { stored = null; }
+        if (!shouldShowOnboarding(stored)) return;
+        buildOnboarding();
+        onboardingFocusReturn = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        onboarding.hidden = false;
+        onboarding.focus({ preventScroll: true });
+        renderOnboardingStep();
+        document.addEventListener('keydown', onboardingEscape);
+      }
+
       startMap();
       renderLegend();
       populateProviderFilter();
       renderProviderFields();
+      watchNoticeClearance();
+
+      /*
+       * Input modality gates the presentational focus ring: the onboarding's
+       * programmatic focus moves (step heading, activation-success status)
+       * must never paint a ring on a fresh load or after pointer interaction
+       * — a painted outline there reads as auto-selected text — while real
+       * keyboard input must bring the indicator back. The document element
+       * carries the last input modality; CSS scopes the heading/status rules
+       * to keyboard use, and real controls keep the normal :focus-visible
+       * behavior unconditionally.
+       */
+      const inputModalityRoot = document.documentElement;
+      document.addEventListener('keydown', () => { inputModalityRoot.dataset.input = 'keyboard'; }, true);
+      document.addEventListener('pointerdown', () => { inputModalityRoot.dataset.input = 'pointer'; }, true);
 
       grip?.addEventListener('click', () => setRail(rail?.getAttribute('data-state') === 'open' ? 'peek' : 'open'));
-      locate?.addEventListener('click', askPosition);
+      locate?.addEventListener('click', () => askPosition());
       filter?.addEventListener('change', () => { populateProviderFilter(); void loadCells(); });
       providerFilter?.addEventListener('change', () => render());
       districtFilter?.addEventListener('change', () => render());
       reportForm?.querySelectorAll<HTMLInputElement>('input[name="services"]').forEach((input) => input.addEventListener('change', renderProviderFields));
       void loadZones();
       void loadCells();
-      askPosition();
+      startOnboarding();
 
       reportForm?.addEventListener('submit', (event) => {
         event.preventDefault();
@@ -685,19 +934,149 @@ import { siteNotice } from '../content.js';
         35% { box-shadow: 0 0 0 9px rgb(10 108 156 / 0), 0 2px 8px rgb(22 32 26 / .38); }
       }
 
-      /* The unofficial plate is static without JavaScript, then yields the map. */
+      /* The unofficial plate is static and permanent: it never yields the map. */
       .plate {
         position: fixed; inset: .75rem .75rem auto; z-index: 700; max-width: 44rem;
         display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem 1rem;
         padding: .7rem 1rem; border: 1px solid var(--line); border-radius: 14px;
         background: rgb(251 252 249 / .93); backdrop-filter: blur(10px);
         box-shadow: 0 6px 22px rgb(22 32 26 / .14);
-        transition: opacity 260ms ease-out;
       }
-      .plate.is-dismissing { opacity: 0; pointer-events: none; }
-      .plate[hidden] { display: none; }
       .wordmark { margin: 0; font-family: Comfortaa, Nunito, sans-serif; font-weight: 700; font-size: 1.05rem; letter-spacing: -.01em; }
       .unofficial { margin: 0; color: var(--muted); font-size: .74rem; line-height: 1.4; max-width: 62ch; text-wrap: pretty; }
+
+      /*
+       * First-run onboarding: on mobile a floating card over the live map
+       * (the container forwards no pointer events; only the card catches
+       * them, so the map and rail stay interactive around it); on desktop
+       * (>=56rem) a full-screen first-load surface that owns the viewport —
+       * see the media block at the bottom.
+       */
+      .onboarding { position: fixed; inset: 0; z-index: 800; pointer-events: none; }
+      /*
+       * Mobile geometry contract: the card reserves the top-right control
+       * column (zoom + locate, ~34px wide at the right inset) by stopping
+       * 4.25rem from the right edge, sits above the lifted attribution
+       * (`.leaflet-bottom` is at 9.6rem), and never grows tall enough to slide
+       * under the permanent plate — its height budget starts below the
+       * measured `--notice-clearance` and any overflow scrolls inside the
+       * card. The card itself is a flex shell that clips: its content column
+       * is the scroll area and the nav is a real footer OUTSIDE that scroll
+       * area, so the footer can never paint over step copy.
+       */
+      .onboarding-card {
+        position: absolute; left: 1rem; right: 4.25rem;
+        bottom: calc(9.6rem + env(safe-area-inset-bottom) + 2.6rem);
+        max-height: calc(100dvh - var(--notice-clearance, 4.5rem) - 13.2rem - env(safe-area-inset-bottom));
+        display: flex; flex-direction: column;
+        padding: .9rem 1.15rem 1.15rem;
+        border: 1px solid var(--line); border-radius: 16px;
+        background: var(--surface);
+        box-shadow: 0 18px 48px rgb(22 32 26 / .22);
+        overflow: hidden; pointer-events: auto;
+        animation: onboard-rise .34s cubic-bezier(.16, 1, .3, 1);
+      }
+      @keyframes onboard-rise {
+        from { opacity: 0; transform: translateY(14px); }
+      }
+      /* The content column: skip, heading, prose, actions, progress, legal.
+       * It is the card's scroll area: the footer nav sits outside it, so
+       * scrolling never slides copy under the navigation. */
+      .onboarding-content { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow-y: auto; }
+      /*
+       * The head carries "Omitir". In the DOM it follows the step heading so
+       * a forward Tab from the open-time focus reaches skip first; `order: -1`
+       * keeps it visually on top of the card. `order` moves paint, never
+       * focus order.
+       */
+      .onboarding-head { order: -1; display: flex; justify-content: flex-end; min-height: 1.1rem; }
+      .onboarding-skip {
+        margin: -.2rem -.2rem -.35rem auto; padding: .2rem .45rem;
+        border: 0; background: none; color: var(--muted);
+        font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer;
+      }
+      .onboarding-skip:hover { color: var(--ink); }
+      .onboarding-figure {
+        display: flex; align-items: center; justify-content: center;
+        height: clamp(7.5rem, 23dvh, 10.5rem); margin: 0 0 .4rem;
+      }
+      .onboarding-figure img { max-height: 100%; max-width: 100%; object-fit: contain; }
+      .onboarding-title {
+        margin: 0 0 .4rem; font-family: Comfortaa, Nunito, sans-serif; font-weight: 700;
+        font-size: 1.12rem; letter-spacing: -.02em; text-wrap: balance;
+      }
+      .onboarding-title:focus-visible { outline: none; }
+      /*
+       * The heading and the success status are focused by script, never by
+       * tabbing: they paint their ring only after genuine keyboard input
+       * (tracked as data-input on the document element), so the open-time
+       * focus on step 1 and the pointer-path success focus stay unpainted.
+       */
+      html[data-input='keyboard'] .onboarding-title:focus-visible { outline: 2px solid var(--agua); outline-offset: 3px; border-radius: 4px; }
+      .onboarding-body { margin: 0 0 .2rem; color: var(--muted); font-size: .88rem; line-height: 1.55; }
+      .onboarding-note { margin: .5rem 0 0; color: #8A5A00; font-size: .82rem; line-height: 1.5; font-weight: 600; }
+      /*
+       * Live regions must never leave the accessibility tree, so the empty
+       * state only drops the box (no display:none): the text insertion is
+       * what gets announced.
+       */
+      .onboarding-note:empty { margin: 0; }
+      /*
+       * Activation success lives inside the location step: it replaces the
+       * activate control, announces politely (role=status) and keeps the flow
+       * open — completion only happens on the last step.
+       */
+      .onboarding-success {
+        margin: .7rem 0 0; padding: .65rem .8rem; border-radius: 10px;
+        background: #EAF6EC; color: #1A7A3A; border: 1px solid #C2E7C8;
+        font-size: .85rem; line-height: 1.5; font-weight: 700;
+      }
+      .onboarding-success:empty { margin: 0; padding: 0; border: 0; background: transparent; }
+      .onboarding-success:focus-visible { outline: none; }
+      html[data-input='keyboard'] .onboarding-success:focus-visible { outline: 2px solid var(--agua); outline-offset: 3px; }
+      /*
+       * The integrated non-official naming inside the full-screen desktop
+       * experience. On mobile the permanent plate above the card already
+       * carries it, so the duplicate stays desktop-only.
+       */
+      .onboarding-legal { display: none; }
+      .onboarding-activate {
+        margin-top: .7rem; width: 100%; padding: .68rem; font: inherit; font-weight: 800; font-size: .9rem;
+        color: #fff; background: var(--agua); border: 0; border-radius: 12px; cursor: pointer;
+      }
+      .onboarding-activate:hover { background: #085C85; }
+      .onboarding-activate[data-busy] { color: rgb(255 255 255 / .75); cursor: progress; }
+      .onboarding-meta { display: flex; align-items: center; gap: .55rem; margin-top: .95rem; }
+      .onboarding-dots { display: flex; gap: .3rem; }
+      .onboarding-dots span { width: 6px; height: 6px; border-radius: 99px; background: var(--line); }
+      .onboarding-dots span[data-active] { background: var(--ink); }
+      .onboarding-progress { margin: 0; color: var(--muted); font-size: .74rem; font-variant-numeric: tabular-nums; }
+      .onboarding-nav { display: flex; gap: .55rem; }
+      /*
+       * The step navigation never scrolls away and never overlaps copy: it is
+       * a real footer BELOW the card's scroll area (a flex child outside the
+       * scrollable content column), so it stays visible and hit-test
+       * reachable on every step, including the location step before and after
+       * activation, while inserted copy stays fully readable. (Mobile-only;
+       * the desktop composition resets it into its grid row.)
+       */
+      .onboarding-nav {
+        flex: none;
+        margin: .6rem 0 0; padding: .55rem 0 0;
+        background: var(--surface);
+        border-top: 1px solid var(--line);
+      }
+      .onboarding-ghost {
+        padding: .62rem .9rem; font: inherit; font-size: .86rem; font-weight: 700;
+        color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 12px; cursor: pointer;
+      }
+      .onboarding-ghost:hover { border-color: var(--muted); }
+      .onboarding-ghost:disabled { color: var(--muted); opacity: .55; cursor: default; }
+      .onboarding-primary {
+        flex: 1; padding: .68rem; font: inherit; font-weight: 800; font-size: .9rem;
+        color: #fff; background: var(--ink); border: 0; border-radius: 12px; cursor: pointer;
+      }
+      .onboarding-primary:hover { background: #0B120E; }
 
       /* The thank-you modal: a native dialog styled into the daylight world. */
       #thanks {
@@ -855,9 +1234,25 @@ import { siteNotice } from '../content.js';
 
       @media (max-width: 55.99rem) {
         .leaflet-bottom { bottom: 9.6rem; }
+        .leaflet-top { top: var(--notice-clearance, 4rem); }
+        /*
+         * Location step (activation control present, or denial/success copy
+         * inserted): this step carries the activate control plus live-region
+         * copy, so the illustration yields height and the whole step — copy,
+         * retry and navigation — fits without any scrolling at the reference
+         * mobile viewport. The internal scroll remains for smaller screens.
+         */
+        .onboarding-card:has(.onboarding-activate:not([hidden])) .onboarding-figure,
+        .onboarding-card:has(.onboarding-note:not(:empty)) .onboarding-figure,
+        .onboarding-card:has(.onboarding-success:not(:empty)) .onboarding-figure {
+          height: clamp(3rem, 8dvh, 5rem);
+        }
       }
 
       @media (min-width: 56rem) {
+        /* The plate shares the top edge with the controls on wide desktops;
+         * JS sets `--notice-clearance` only when it can actually reach them. */
+        .leaflet-top { top: var(--notice-clearance, .625rem); }
         .rail {
           top: 0; right: auto; bottom: 0; width: 25rem; max-height: none;
           border-top: 0; border-right: 1px solid var(--line); border-radius: 0;
@@ -867,11 +1262,77 @@ import { siteNotice } from '../content.js';
         .answer { padding: 1.9rem 1.5rem .25rem; font-size: 1.1rem; }
         .rail-body { padding: .6rem 1.5rem 2rem; }
         .plate { left: 26.5rem; }
+        /*
+         * Desktop first-load contract: the onboarding is a full-screen
+         * experience that owns the whole viewport from the moment the page
+         * opens — a two-column editorial composition (large illustration on
+         * the left, content and actions on the right) on the daylight ground.
+         * The surface takes pointer events, so the map and rail behind it are
+         * unreachable until the visitor finishes or skips; the integrated
+         * `.onboarding-legal` line keeps the permanent non-official naming
+         * visible on every step while the plate rests underneath.
+         */
+        .onboarding {
+          pointer-events: auto;
+          background:
+            radial-gradient(72rem 46rem at 14% 24%, rgb(44 157 218 / .09), transparent 62%),
+            linear-gradient(168deg, var(--surface) 0%, var(--ground) 56%, #E5EBE3 100%);
+          animation: onboard-fade .4s cubic-bezier(.16, 1, .3, 1);
+        }
+        @keyframes onboard-fade { from { opacity: 0; } }
+        .onboarding-card {
+          position: relative; inset: auto; bottom: auto;
+          width: 100%; max-width: none; height: 100dvh; max-height: none;
+          display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+          grid-template-rows: minmax(0, 1fr) auto;
+          align-items: stretch;
+          column-gap: clamp(2.5rem, 6vw, 6rem);
+          padding: 2.5rem clamp(2.25rem, 7vw, 6.5rem);
+          border: 0; border-radius: 0;
+          background: transparent; box-shadow: none;
+          overflow: visible; animation: none;
+        }
+        .onboarding-stage {
+          grid-column: 1; grid-row: 1 / -1;
+          display: flex; align-items: center; justify-content: center;
+          min-width: 0; min-height: 0;
+        }
+        .onboarding-figure { height: auto; margin: 0; width: 100%; max-width: 42rem; }
+        .onboarding-figure img { width: 100%; max-height: min(76dvh, 44rem); object-fit: contain; }
+        .onboarding-content {
+          grid-column: 2; grid-row: 1;
+          justify-content: center;
+          max-width: 34rem;
+          overflow: visible;
+        }
+        .onboarding-head { margin: 0 0 1.3rem; }
+        .onboarding-skip { font-size: .84rem; }
+        .onboarding-title {
+          margin: 0 0 .95rem;
+          font-size: clamp(1.85rem, 3vw, 2.7rem); line-height: 1.12;
+        }
+        .onboarding-body { margin: 0 0 .5rem; font-size: 1.04rem; line-height: 1.6; max-width: 52ch; }
+        .onboarding-note { margin-top: 1.35rem; font-size: .88rem; max-width: 32rem; }
+        .onboarding-success { margin: 1.35rem 0 0; max-width: 26rem; font-size: .92rem; }
+        .onboarding-activate { margin: 1.5rem 0 0; width: 100%; max-width: 24rem; padding: .8rem; font-size: .98rem; }
+        .onboarding-meta { margin-top: 1.7rem; }
+        .onboarding-dots span { width: 7px; height: 7px; }
+        .onboarding-progress { font-size: .8rem; }
+        .onboarding-nav { grid-column: 2; grid-row: 2; position: static; flex: none; margin-top: .7rem; padding: 0; max-width: 24rem; background: transparent; border-top: 0; }
+        .onboarding-ghost { padding: .72rem .95rem; font-size: .92rem; }
+        .onboarding-primary { padding: .78rem; font-size: .97rem; }
+        .onboarding-legal {
+          display: block;
+          margin: 2.2rem 0 0; padding-top: 1rem; border-top: 1px solid var(--line);
+          color: var(--muted); font-size: .78rem; line-height: 1.55; max-width: 46ch;
+          text-wrap: pretty;
+        }
       }
 
       @media (prefers-reduced-motion: reduce) {
-        .rail, #submit, .plate { transition: none; }
+        .rail, #submit { transition: none; }
         .me span { animation: none; }
+        .onboarding-card, .onboarding { animation: none; }
       }
     </style>
   </body>
