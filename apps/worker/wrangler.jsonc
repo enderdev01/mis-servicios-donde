@@ -1,0 +1,45 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mis-servicios-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  // Hyperdrive pools connections to the existing Postgres. Create it with
+  // `wrangler hyperdrive create mis-servicios-db --connection-string=<DATABASE_URL>` and paste the id below.
+  // `localConnectionString` points `wrangler dev` at the repo's Docker Postgres.
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "3403ac486e5943ad9d548019ecdcc873",
+      "localConnectionString": "postgresql://mis_servicios:mis_servicios@127.0.0.1:54329/mis_servicios"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "SCHEDULER", "class_name": "Scheduler" },
+      { "name": "REPORT_LIMITER", "class_name": "ReportLimiter" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Scheduler", "ReportLimiter"] }
+  ],
+  // Global per-IP limit (was RATE_LIMIT_MAX per RATE_LIMIT_WINDOW_MS in memory).
+  "ratelimits": [
+    { "name": "GLOBAL_LIMITER", "namespace_id": "2001", "simple": { "limit": 120, "period": 60 } }
+  ],
+  // Only re-arms the scheduler alarm if it is missing; it never queries the database.
+  "triggers": { "crons": ["0 * * * *"] },
+  "vars": {
+    // Product gates stay off until the pilot is approved. Enable in order: map, intake, dispatch.
+    "INTAKE_ENABLED": "false",
+    "PUBLIC_MAP_ENABLED": "false",
+    "ALERT_DISPATCH_ENABLED": "false",
+    "RETENTION_WORKER_ENABLED": "false",
+    "H3_RESOLUTION": "9",
+    // Above Neon's 5-minute idle suspend, so expiry does not keep the database awake. Public reads already hide
+    // expired episodes, so this job only materialises the closure.
+    "EPISODE_EXPIRY_INTERVAL_SECONDS": "3600"
+  }
+  // Secrets (set with `wrangler secret put`, never committed): DEVICE_TOKEN_SECRET, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID.
+}

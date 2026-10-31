@@ -3,11 +3,11 @@
   "rewrites": [
     {
       "source": "/v1/:path*",
-      "destination": "https://mis-serviciosapi-develop.up.railway.app/v1/:path*"
+      "destination": "https://mis-servicios-api.onilabs-dev.workers.dev/v1/:path*"
     },
     {
       "source": "/health",
-      "destination": "https://mis-serviciosapi-develop.up.railway.app/health"
+      "destination": "https://mis-servicios-api.onilabs-dev.workers.dev/health"
     }
   ]
 }
