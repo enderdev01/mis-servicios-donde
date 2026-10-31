@@ -31,9 +31,11 @@
   // Only re-arms the scheduler alarm if it is missing; it never queries the database.
   "triggers": { "crons": ["0 * * * *"] },
   "vars": {
-    // Product gates stay off until the pilot is approved. Enable in order: map, intake, dispatch.
+    // Enable in order: map, dispatch (needs the Telegram secrets), intake, then retention once data collection starts.
+    // The map is on: it only publishes aggregated cells. Intake stays off until alerts can be delivered, because
+    // dispatch being off cancels every alert an episode creates and that cannot be recovered.
     "INTAKE_ENABLED": "false",
-    "PUBLIC_MAP_ENABLED": "false",
+    "PUBLIC_MAP_ENABLED": "true",
     "ALERT_DISPATCH_ENABLED": "false",
     "RETENTION_WORKER_ENABLED": "false",
     "H3_RESOLUTION": "9",
