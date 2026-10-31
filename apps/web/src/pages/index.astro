@@ -1,5 +1,5 @@
 ---
-import { siteNotice } from '../content.js';
+import { siteNotice, unofficialNotice } from '../content.js';
 ---
 
 <!doctype html>
@@ -36,10 +36,51 @@ import { siteNotice } from '../content.js';
       <div id="outage-map" aria-label="Mapa de zonas con cortes confirmados. Los mismos cortes aparecen como texto en el panel."></div>
     </div>
 
-    <header class="plate">
-      <p class="wordmark">Mis Servicios</p>
-      <p class="unofficial" role="note">{siteNotice} No es un canal oficial de Sedapal, Luz del Sur ni de ningún proveedor.</p>
-    </header>
+    <!--
+      Identity: a permanent marker, not a standing plate. The two-line notice
+      used to sit over the map on every viewport and buy its space out of the
+      Leaflet control strip; here it collapses behind one compact control that
+      still carries the non-official framing ("No oficial") at all times, and
+      expands the wordmark and the full naming on demand. The wrapper is what
+      `watchNoticeClearance` measures, so the controls follow whichever state
+      is showing.
+    -->
+    <div class="identity" id="identity">
+      <button
+        type="button"
+        class="identity-toggle"
+        id="identity-toggle"
+        aria-expanded="false"
+        aria-controls="site-identity"
+        aria-label="Aviso: información no oficial"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 11.2v4.8" />
+          <path d="M12 7.9h.01" />
+        </svg>
+        <span>No oficial</span>
+      </button>
+      <header class="plate" id="site-identity" hidden>
+        <p class="wordmark">Mis Servicios</p>
+        <p class="unofficial" role="note">{siteNotice} {unofficialNotice}</p>
+      </header>
+    </div>
+
+    <!--
+      First-run onboarding: a section that comes BEFORE the map on every
+      viewport, owning the whole screen from the moment the page opens and
+      blocking pointer interaction with the map and rail behind it, with the
+      permanent non-official naming integrated on every step. Mobile stacks one
+      column (illustration, copy, navigation) and nothing inside it scrolls —
+      the illustration yields height instead; desktop (>=56rem) composes the
+      same parts into a two-column editorial spread. No dialog semantics are
+      taken; focus moves to the card on open and returns where it came from on
+      close, and Escape closes it from anywhere. A successful location
+      activation never completes the flow: it shows a success state on the
+      location step, and only finishing step 4 persists completion.
+    -->
+    <div class="onboarding" id="onboarding" hidden role="region" aria-label="Introducción al mapa comunitario" tabindex="-1"></div>
 
     <aside class="rail" id="rail" data-state="peek">
       <button type="button" class="grip" id="grip" aria-expanded="false" aria-controls="rail-body">
@@ -52,10 +93,28 @@ import { siteNotice } from '../content.js';
         <h1>¿Es solo tu casa?</h1>
         <p class="lede">Tres vecinos distintos tienen que reportar lo mismo para que un corte quede confirmado. Hasta entonces aparece como "sin confirmar".</p>
 
-        <ul id="map-legend" class="legend"></ul>
+        <!--
+          Mobile only: the sheet used to stack both panels into one scroll —
+          filters, the outage list and the whole report form — so the form sat
+          entirely below the fold. Below 56rem these two controls show one panel
+          at a time; from 56rem the rail is a 25rem column with room for both,
+          so `watchRailTabs` strips the tab semantics and CSS shows both again.
+          The control is inert markup until that watcher wires it, which keeps
+          the no-JS render complete rather than half a tab strip.
+        -->
+        <div class="rail-tabs" id="rail-tabs" hidden>
+          <button type="button" class="rail-tab" id="rail-tab-report" data-panel="report-panel">Reportar</button>
+          <button type="button" class="rail-tab" id="rail-tab-reports" data-panel="reports-panel">Reportes</button>
+        </div>
 
-        <section class="panel" aria-labelledby="near-heading">
+        <!--
+          The legend lives with the outage list: it decodes the same
+          confirmation levels the list and the map blobs use, and pairing them
+          keeps the report tab down to the form alone.
+        -->
+        <section class="panel" id="reports-panel" aria-labelledby="near-heading">
           <h2 id="near-heading">Cortes cerca tuyo</h2>
+          <ul id="map-legend" class="legend"></ul>
           <div class="filters">
             <label class="filter">
               <span>Ver distrito</span>
@@ -84,9 +143,9 @@ import { siteNotice } from '../content.js';
           <button type="button" class="locate" id="locate" hidden>Activar mi ubicación</button>
         </section>
 
-        <section class="panel" aria-labelledby="report-heading">
+        <section class="panel" id="report-panel" aria-labelledby="report-heading">
           <h2 id="report-heading">Reportar un corte</h2>
-          <p class="fine">Tu ubicación exacta se usa una sola vez para agrupar el reporte en una zona amplia. No se guarda ni se muestra.</p>
+          <p class="fine">Al enviar el reporte, tu ubicación exacta se manda una sola vez: el servidor la convierte en una zona amplia y la descarta. No se guarda ni se muestra.</p>
           <form id="report-form" novalidate>
             <fieldset>
               <legend>¿Qué servicio?</legend>
@@ -132,6 +191,8 @@ import { siteNotice } from '../content.js';
         leadAnswer, loadingMessage, providerLabel, providerOptions, serviceStyles, sortByProximity, summarizeCells, toCellBlobs, toPublicCells, zoneBounds,
         type NearbyCell, type Provider, type PublicCell, type Service, type ZoneSummary,
       } from '../map.js';
+      import { ONBOARDING_STORAGE_KEY, persistOnboardingStatus, shouldShowOnboarding } from '../onboarding.js';
+      import { onboardingSteps, locationSuccess, siteNotice, unofficialNotice } from '../content.js';
 
       const $ = <T extends Element>(selector: string): T | null => document.querySelector<T>(selector);
       const districtFilter = $<HTMLSelectElement>('#district-filter');
@@ -144,6 +205,8 @@ import { siteNotice } from '../content.js';
       const reportState = $<HTMLElement>('#report-state');
       const locate = $<HTMLButtonElement>('#locate');
       const rail = $<HTMLElement>('#rail');
+      const railBody = $<HTMLElement>('#rail-body');
+      const railTabs = $<HTMLElement>('#rail-tabs');
       const grip = $<HTMLButtonElement>('#grip');
       const gripLabel = $<HTMLElement>('#grip-label');
       const answer = $<HTMLElement>('#answer');
@@ -508,9 +571,11 @@ import { siteNotice } from '../content.js';
       /**
        * Denial is a first-class state, never an error: the map stays on the pilot
        * zone and the panel offers the permission again on the visitor's terms.
+       * The request itself is never automatic: it fires only from an explicit
+       * visitor action (onboarding activation, locate controls, report submit).
        */
-      function askPosition(): void {
-        if (!navigator.geolocation) { locate?.removeAttribute('hidden'); return; }
+      function askPosition(onSuccess?: () => void, onError?: () => void): void {
+        if (!navigator.geolocation) { locate?.removeAttribute('hidden'); onError?.(); return; }
         locate?.setAttribute('data-busy', 'true');
         navigator.geolocation.getCurrentPosition(
           (position) => {
@@ -519,9 +584,10 @@ import { siteNotice } from '../content.js';
             if (myDistrictSlug && districtFilter) districtFilter.value = myDistrictSlug;
             locate?.setAttribute('hidden', '');
             locate?.removeAttribute('data-busy');
+            onSuccess?.();
             void loadCells(true).then(centreOnMe);
           },
-          () => { locate?.removeAttribute('data-busy'); locate?.removeAttribute('hidden'); },
+          () => { locate?.removeAttribute('data-busy'); locate?.removeAttribute('hidden'); onError?.(); },
           { maximumAge: 60_000, timeout: 8_000 },
         );
       }
@@ -532,20 +598,535 @@ import { siteNotice } from '../content.js';
         if (gripLabel) gripLabel.textContent = state === 'open' ? 'Ocultar el panel' : 'Ver el panel';
       }
 
+      /*
+       * The mobile rail used to stack both panels into one scroll: the framing,
+       * the legend, three filters, the outage list and the whole report form —
+       * 743px of content in a 489px sheet on a 390px-wide phone, with the form
+       * entirely below the fold. Below 56rem the two panels become two tabs
+       * ("Reportar" first, "Reportes" second) so one set of options shows at a
+       * time. From 56rem the rail is a 25rem column that fits both, so the
+       * layout there is untouched.
+       *
+       * The semantics are applied and removed with the layout, never left
+       * standing: a tablist whose tabs are `display: none` would still announce
+       * a two-tab widget on desktop, where there is nothing to switch. So the
+       * whole contract — the roles, `aria-selected`, `aria-controls`, the
+       * roving tabindex and the panels' own tabpanel roles — is added when the
+       * narrow layout applies and stripped when it stops applying.
+       */
+      const railTabButtons = railTabs
+        ? Array.from(railTabs.querySelectorAll<HTMLButtonElement>('.rail-tab'))
+        : [];
+      const railTabPanels = railTabButtons.map((tab) => $<HTMLElement>(`#${tab.dataset.panel}`));
+      /*
+       * Each panel's own heading, captured before any tab semantics touch it.
+       * Leaving the split has to put back exactly what was there rather than
+       * re-derive it from the panel's position — the tabs are ordered
+       * "Reportar" first while the panels keep their reading order, so the two
+       * lists do not line up and deriving it silently crosses the labels.
+       */
+      const railPanelLabels = railTabPanels.map((panel) => panel?.getAttribute('aria-labelledby') ?? null);
+
+      function setRailTab(selected: number): void {
+        railTabButtons.forEach((tab, index) => {
+          const isSelected = index === selected;
+          tab.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+          // Roving tabindex: one Tab press leaves the strip for the panel it
+          // opened, and the arrow keys are what move between the tabs.
+          tab.tabIndex = isSelected ? 0 : -1;
+          const panel = railTabPanels[index];
+          if (panel) panel.dataset.tabState = isSelected ? 'active' : 'inactive';
+        });
+      }
+
+      function applyRailTabs(on: boolean): void {
+        if (!railTabs || !railBody || railTabButtons.length === 0) return;
+        railTabs.hidden = !on;
+        if (on) {
+          railBody.dataset.tabs = 'on';
+          railTabs.setAttribute('role', 'tablist');
+          railTabs.setAttribute('aria-label', 'Secciones del panel');
+          railTabButtons.forEach((tab, index) => {
+            tab.setAttribute('role', 'tab');
+            const panel = railTabPanels[index];
+            if (!panel) return;
+            tab.setAttribute('aria-controls', panel.id);
+            panel.setAttribute('role', 'tabpanel');
+            panel.setAttribute('aria-labelledby', tab.id);
+            // A panel that scrolls has to be focusable, or a keyboard visitor
+            // reaching it from the tab cannot scroll it.
+            panel.tabIndex = 0;
+          });
+          // Whichever tab was already selected survives a rotation back to
+          // narrow; a first application starts on "Reportar".
+          setRailTab(Math.max(railTabButtons.findIndex((tab) => tab.getAttribute('aria-selected') === 'true'), 0));
+          return;
+        }
+        // Wide again: hand both panels back, with no tab semantics left over.
+        delete railBody.dataset.tabs;
+        railTabs.removeAttribute('role');
+        railTabs.removeAttribute('aria-label');
+        railTabButtons.forEach((tab, index) => {
+          tab.removeAttribute('role');
+          tab.removeAttribute('aria-controls');
+          tab.tabIndex = -1;
+          const panel = railTabPanels[index];
+          if (!panel) return;
+          panel.removeAttribute('role');
+          // `aria-labelledby` pointed at the tab; the section's own heading
+          // labels it again, exactly as it did before the split existed.
+          const label = railPanelLabels[index];
+          if (label) panel.setAttribute('aria-labelledby', label);
+          else panel.removeAttribute('aria-labelledby');
+          panel.removeAttribute('tabindex');
+          delete panel.dataset.tabState;
+        });
+      }
+
+      function watchRailTabs(): void {
+        if (!railTabs || !railBody || railTabButtons.length === 0) return;
+        railTabButtons.forEach((tab, index) => {
+          tab.addEventListener('click', () => setRailTab(index));
+          tab.addEventListener('keydown', (event) => {
+            const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+            if (step === 0) return;
+            event.preventDefault();
+            const next = (index + step + railTabButtons.length) % railTabButtons.length;
+            setRailTab(next);
+            railTabButtons[next]?.focus();
+          });
+        });
+        // The same 56rem boundary the stylesheet uses. Keeping it in one
+        // `matchMedia` means a rotation or a resized window moves the ARIA and
+        // the layout together instead of leaving one of them behind.
+        const narrow = matchMedia('(max-width: 55.99rem)');
+        applyRailTabs(narrow.matches);
+        narrow.addEventListener('change', (event) => applyRailTabs(event.matches));
+      }
+
+      /*
+       * The identity is fixed above the garden, so the map controls it overlaps
+       * would be unreachable. The top-right Leaflet controls only need to drop
+       * below it when it can actually reach them horizontally — collapsed it is
+       * a narrow badge that never does, expanded on a small screen it always
+       * does, and on a wide desktop the panel still ends far left of the strip.
+       * Measuring the wrapper (badge + panel) makes the clearance follow the
+       * expand/collapse as well as text wrapping and viewport changes, through
+       * one ResizeObserver.
+       */
+      function updateNoticeClearance(): void {
+        if (!identity) return;
+        const identityRect = identity.getBoundingClientRect();
+        const controlStrip = 66; // 34px locate control + 10px inset + breathing room
+        if (identityRect.right + controlStrip >= window.innerWidth) {
+          const clearance = identityRect.height + 20; // .75rem offset + .5rem gap
+          document.documentElement.style.setProperty('--notice-clearance', `${Math.ceil(clearance)}px`);
+        } else {
+          document.documentElement.style.removeProperty('--notice-clearance');
+        }
+      }
+
+      function watchNoticeClearance(): void {
+        if (!identity) return;
+        updateNoticeClearance();
+        // The observer covers text wrapping and viewport changes; expanding and
+        // collapsing recompute synchronously in `setIdentityExpanded`, so the
+        // controls never spend a frame underneath the panel.
+        if (typeof ResizeObserver === 'function') new ResizeObserver(updateNoticeClearance).observe(identity);
+        else window.addEventListener('resize', updateNoticeClearance);
+      }
+
+      /*
+       * The identity panel is collapsed by default on every viewport: the
+       * standing marker is the control itself, and the wordmark plus the full
+       * unofficial naming are one activation away. The control, Escape and a
+       * pointer outside all collapse it; Escape hands focus back to the control
+       * so the panel is never a dead end. Escape here runs before the
+       * onboarding's own handler and stops it when the panel is the thing that
+       * is open, so the innermost open surface always owns the key.
+       */
+      function setIdentityExpanded(expanded: boolean): void {
+        if (!plate || !identityToggle) return;
+        plate.hidden = !expanded;
+        identityToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        updateNoticeClearance();
+      }
+
+      function watchIdentityPanel(): void {
+        if (!identity || !plate || !identityToggle) return;
+        identityToggle.addEventListener('click', () => {
+          setIdentityExpanded(identityToggle.getAttribute('aria-expanded') !== 'true');
+        });
+        document.addEventListener('keydown', (event) => {
+          if (event.key !== 'Escape' || plate.hidden) return;
+          event.stopImmediatePropagation();
+          setIdentityExpanded(false);
+          identityToggle.focus({ preventScroll: true });
+        });
+        document.addEventListener('pointerdown', (event) => {
+          if (plate.hidden) return;
+          if (event.target instanceof Node && identity.contains(event.target)) return;
+          setIdentityExpanded(false);
+        });
+      }
+
+      /*
+       * First-run onboarding: four illustrated steps ahead of the live map,
+       * rendered from one copy source (content.js). The layer is a region, not
+       * a dialog: it owns the viewport on every size, but nothing behind it is
+       * competing for the visitor, so no focus is trapped and only the
+       * open-time focus move and close-time restore are managed.
+       */
+      const onboarding = $<HTMLElement>('#onboarding');
+      const plate = $<HTMLElement>('#site-identity');
+      const identity = $<HTMLElement>('#identity');
+      const identityToggle = $<HTMLButtonElement>('#identity-toggle');
+      let onboardingIndex = 0;
+      let onboardingFocusReturn: HTMLElement | null = null;
+      let onboardingBuilt = false;
+      /**
+       * Slide fades: a move dims the current step out, swaps the copy, and
+       * brings the new step back. Moves are queued so rapid clicks still land
+       * one step each, and the fade duration mirrors `--onboarding-fade`.
+       */
+      const ONBOARDING_FADE_MS = 160;
+      /**
+       * Queued *destinations*, not deltas. The drain has to take a move off the
+       * queue before it can await the fade, so a queue of deltas stops
+       * describing where the flow is heading the moment a move is in flight —
+       * the delta is gone and `onboardingIndex` has not caught up yet.
+       */
+      const onboardingMoveQueue: number[] = [];
+      /**
+       * The step the visitor has already asked for, updated synchronously by
+       * `moveOnboarding` and only reached by `onboardingIndex` once the fades
+       * and the illustration decode have finished. Every decision about what a
+       * control should do next reads this; only rendering reads the settled
+       * index. Deciding on the settled one is what let a fast tap on the last
+       * step queue a move the drain then discarded, leaving the card over the
+       * map.
+       */
+      let onboardingPendingIndex = 0;
+      let onboardingMoving = false;
+      let onboardingClosing = false;
+      /**
+       * Set once a location request succeeds while the onboarding is open.
+       * Success is a state on the location step, never a completion: the flow
+       * stays open, "Siguiente" keeps advancing, and only finishing step 4
+       * persists anything.
+       */
+      let onboardingLocationShown = false;
+      const onboardingParts = {
+        stage: document.createElement('div') as HTMLElement,
+        content: document.createElement('div') as HTMLElement,
+        figure: document.createElement('figure') as HTMLElement,
+        image: document.createElement('img') as HTMLImageElement,
+        title: document.createElement('h2') as HTMLElement,
+        body: document.createElement('p') as HTMLElement,
+        note: document.createElement('p') as HTMLElement,
+        success: document.createElement('p') as HTMLElement,
+        activate: document.createElement('button') as HTMLButtonElement,
+        prev: document.createElement('button') as HTMLButtonElement,
+        next: document.createElement('button') as HTMLButtonElement,
+        skip: document.createElement('button') as HTMLButtonElement,
+        progress: document.createElement('p') as HTMLElement,
+        dots: document.createElement('div') as HTMLElement,
+        legal: document.createElement('p') as HTMLElement,
+      };
+
+      function buildOnboarding(): void {
+        if (!onboarding || onboardingBuilt) return;
+        onboardingBuilt = true;
+        const card = document.createElement('div');
+        card.className = 'onboarding-card';
+        // The stage (illustration) and the content column let CSS compose a
+        // two-column editorial layout on desktop while the mobile card keeps
+        // stacking both vertically inside one floating card.
+        const stage = onboardingParts.stage;
+        stage.className = 'onboarding-stage';
+        const figure = onboardingParts.figure;
+        figure.className = 'onboarding-figure';
+        const image = onboardingParts.image;
+        image.decoding = 'async';
+        figure.append(image);
+        stage.append(figure);
+        const skip = onboardingParts.skip;
+        skip.type = 'button';
+        skip.className = 'onboarding-skip';
+        skip.textContent = 'Omitir';
+        const title = onboardingParts.title;
+        title.className = 'onboarding-title';
+        title.tabIndex = -1;
+        const head = document.createElement('div');
+        head.className = 'onboarding-head';
+        head.append(skip);
+        const body = onboardingParts.body;
+        body.className = 'onboarding-body';
+        const note = onboardingParts.note;
+        note.className = 'onboarding-note';
+        // A real polite live region: the element is always rendered and only
+        // its text changes, so screen readers announce the denial insertion.
+        // The empty state is styled away (no box) instead of display:none.
+        note.setAttribute('role', 'status');
+        note.setAttribute('aria-live', 'polite');
+        const success = onboardingParts.success;
+        success.className = 'onboarding-success';
+        success.tabIndex = -1;
+        // A real polite live region (never toggled hidden): the text change
+        // announces while the element is already in the accessibility tree.
+        success.setAttribute('role', 'status');
+        success.setAttribute('aria-live', 'polite');
+        const activate = onboardingParts.activate;
+        activate.type = 'button';
+        activate.className = 'onboarding-activate';
+        activate.textContent = 'Activar ubicación';
+        const legal = onboardingParts.legal;
+        legal.className = 'onboarding-legal';
+        legal.textContent = `${siteNotice} ${unofficialNotice}`;
+        const meta = document.createElement('div');
+        meta.className = 'onboarding-meta';
+        const dots = onboardingParts.dots;
+        dots.className = 'onboarding-dots';
+        dots.setAttribute('aria-hidden', 'true');
+        const progress = onboardingParts.progress;
+        progress.className = 'onboarding-progress';
+        meta.append(dots, progress);
+        const nav = document.createElement('div');
+        nav.className = 'onboarding-nav';
+        const prev = onboardingParts.prev;
+        prev.type = 'button';
+        prev.className = 'onboarding-ghost';
+        prev.textContent = 'Anterior';
+        const next = onboardingParts.next;
+        next.type = 'button';
+        next.className = 'onboarding-primary';
+        nav.append(prev, next);
+        // DOM order is focus order: the heading first, then the skip control
+        // right after it, so one forward Tab from the open-time focus (the step
+        // heading) reaches "Omitir". CSS `order` puts the head back on top
+        // visually without changing that forward order. The nav lives OUTSIDE
+        // the scrollable content column (a real footer, never a sticky overlay
+        // painted over copy): unfocusable elements (meta, legal) sit between
+        // it and the content in DOM order, so the forward Tab order is
+        // unchanged — title, skip, activate, then the two nav buttons.
+        const content = onboardingParts.content;
+        content.className = 'onboarding-content';
+        content.append(title, head, body, note, success, activate, meta, legal);
+        card.append(stage, content, nav);
+        onboarding.append(card);
+
+        skip.addEventListener('click', () => closeOnboarding('skipped'));
+        prev.addEventListener('click', () => moveOnboarding(-1));
+        next.addEventListener('click', () => {
+          // Against the *pending* step, never the settled one: during a fade the
+          // settled index still names the step being left, and deciding on it
+          // sends the finishing tap into the move queue, where the drain drops
+          // it — the card stays over the map on the last step.
+          if (onboardingPendingIndex === onboardingSteps.length - 1) { closeOnboarding('completed'); return; }
+          moveOnboarding(1);
+        });
+        activate.addEventListener('click', () => {
+          if (activate.hasAttribute('data-busy')) return;
+          activate.setAttribute('data-busy', 'true');
+          askPosition(
+            () => {
+              activate.removeAttribute('data-busy');
+              // Success stays on the step: announce it, keep the flow open.
+              onboardingLocationShown = true;
+              onboardingParts.activate.hidden = true;
+              onboardingParts.note.textContent = '';
+              onboardingParts.success.textContent = `${locationSuccess.message}. ${locationSuccess.detail}`;
+              onboardingParts.success.focus({ preventScroll: true });
+            },
+            () => {
+              activate.removeAttribute('data-busy');
+              note.textContent = 'No pudimos obtener tu ubicación ahora. Puedes activarla después con el control del mapa o continuar sin ella.';
+            },
+          );
+        });
+      }
+
+      /*
+       * Escape closes the onboarding from anywhere: focus may sit on the map or
+       * the rail while the card is open, so the listener is global but only
+       * alive while the onboarding is open.
+       */
+      const onboardingEscape = (event: KeyboardEvent): void => {
+        if (event.key === 'Escape') { event.preventDefault(); closeOnboarding('skipped'); }
+      };
+
+      const prefersReducedMotion = (): boolean =>
+        typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const waitForFade = (): Promise<void> =>
+        new Promise((resolve) => window.setTimeout(resolve, ONBOARDING_FADE_MS));
+      /**
+       * Decoded-image cache shared by the eager preload and every step swap.
+       * Awaiting the same URL twice is free, and it lets a move hold the
+       * transparent slide until the next illustration is ready — without it the
+       * reused <img> keeps painting the previous bitmap while the new file is
+       * still in flight, which reads as the old image lingering after the fade.
+       */
+      const onboardingImageLoads = new Map<string, Promise<void>>();
+      function loadOnboardingImage(src: string): Promise<void> {
+        const cached = onboardingImageLoads.get(src);
+        if (cached) return cached;
+        const pending = new Promise<void>((resolve) => {
+          const probe = new Image();
+          probe.decoding = 'async';
+          probe.addEventListener('load', () => resolve(), { once: true });
+          probe.addEventListener('error', () => resolve(), { once: true });
+          probe.src = src;
+        });
+        onboardingImageLoads.set(src, pending);
+        return pending;
+      }
+      /** Warms the cache for every step at open, so swaps have nothing to wait for. */
+      function preloadOnboardingImages(): void {
+        for (const step of onboardingSteps) void loadOnboardingImage(step.image);
+      }
+
+      function moveOnboarding(delta: number): void {
+        const target = Math.min(Math.max(onboardingPendingIndex + delta, 0), onboardingSteps.length - 1);
+        // Already heading for that edge: queueing this move would only give the
+        // drain something to discard.
+        if (target === onboardingPendingIndex) return;
+        onboardingPendingIndex = target;
+        onboardingMoveQueue.push(target);
+        void drainOnboardingMoves();
+      }
+
+      /**
+       * Drains queued step moves, fading the current slide out before the copy
+       * swaps and back in after it. The queue keeps rapid clicks lossless —
+       * three quick taps still land three steps ahead — while reduced motion
+       * swaps directly and settles synchronously.
+       */
+      async function drainOnboardingMoves(): Promise<void> {
+        if (onboardingMoving || onboardingClosing) return;
+        onboardingMoving = true;
+        const card = onboardingParts.stage.parentElement;
+        const animated = card !== null && !prefersReducedMotion();
+        while (onboardingMoveQueue.length > 0 && !onboardingClosing) {
+          const target = onboardingMoveQueue.shift() as number;
+          if (target === onboardingIndex) continue;
+          if (animated && card) {
+            card.dataset.fade = 'out';
+            await waitForFade();
+            if (onboardingClosing) break;
+          }
+          onboardingIndex = target;
+          renderOnboardingStep();
+          // Hold the transparent slide until the new illustration is decoded,
+          // so the fade-in can never reveal the previous step's bitmap.
+          const step = onboardingSteps[target];
+          if (animated && step) {
+            await loadOnboardingImage(step.image);
+            if (onboardingClosing) break;
+          }
+          if (animated && card) {
+            card.removeAttribute('data-fade');
+            await waitForFade();
+          }
+        }
+        onboardingMoving = false;
+      }
+
+      function renderOnboardingStep(): void {
+        const step = onboardingSteps[onboardingIndex];
+        if (!step) return;
+        onboardingParts.image.src = step.image;
+        onboardingParts.image.alt = step.alt;
+        onboardingParts.title.textContent = step.title;
+        onboardingParts.body.textContent = step.body;
+        onboardingParts.note.textContent = '';
+        // A completed activation is remembered for the visit: returning to the
+        // location step shows the success state again, without re-requesting.
+        const locationReady = step.id === 'location' && onboardingLocationShown;
+        onboardingParts.activate.hidden = step.id !== 'location' || onboardingLocationShown;
+        onboardingParts.success.textContent = locationReady ? `${locationSuccess.message}. ${locationSuccess.detail}` : '';
+        onboardingParts.prev.disabled = onboardingIndex === 0;
+        onboardingParts.next.textContent = onboardingIndex === onboardingSteps.length - 1 ? 'Empezar a usar el mapa' : 'Siguiente';
+        onboardingParts.progress.textContent = `Paso ${onboardingIndex + 1} de ${onboardingSteps.length}`;
+        onboardingParts.dots.replaceChildren(...onboardingSteps.map((_, index) => {
+          const dot = document.createElement('span');
+          if (index === onboardingIndex) dot.setAttribute('data-active', 'true');
+          return dot;
+        }));
+        onboardingParts.title.focus({ preventScroll: true });
+      }
+
+      function closeOnboarding(status: 'completed' | 'skipped'): void {
+        if (!onboarding || onboarding.hidden || onboardingClosing) return;
+        // Storage can be full or blocked (private mode); skipping must still work.
+        try { persistOnboardingStatus(localStorage, status); } catch { /* this visit simply replays next time */ }
+        const finish = (): void => {
+          onboarding.hidden = true;
+          onboarding.removeAttribute('data-closing');
+          document.removeEventListener('keydown', onboardingEscape);
+          onboarding.replaceChildren();
+          onboardingBuilt = false;
+          onboardingIndex = 0;
+          onboardingPendingIndex = 0;
+          onboardingMoveQueue.length = 0;
+          onboardingClosing = false;
+          onboardingLocationShown = false;
+          onboardingFocusReturn?.focus({ preventScroll: true });
+          onboardingFocusReturn = null;
+        };
+        // Entering the app is a fade too: the last step (or a skip) dissolves
+        // the whole surface before the layer is torn down. Reduced motion
+        // closes at once, with nothing to wait for.
+        if (prefersReducedMotion()) { finish(); return; }
+        onboardingClosing = true;
+        onboarding.dataset.closing = 'true';
+        window.setTimeout(finish, ONBOARDING_FADE_MS);
+      }
+
+      function startOnboarding(): void {
+        if (!onboarding) return;
+        let stored: string | null = null;
+        try { stored = localStorage.getItem(ONBOARDING_STORAGE_KEY); } catch { stored = null; }
+        if (!shouldShowOnboarding(stored)) return;
+        buildOnboarding();
+        preloadOnboardingImages();
+        onboardingFocusReturn = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        onboarding.hidden = false;
+        onboarding.focus({ preventScroll: true });
+        renderOnboardingStep();
+        document.addEventListener('keydown', onboardingEscape);
+      }
+
       startMap();
       renderLegend();
       populateProviderFilter();
       renderProviderFields();
+      watchNoticeClearance();
+      watchIdentityPanel();
+      watchRailTabs();
+
+      /*
+       * Input modality gates the presentational focus ring: the onboarding's
+       * programmatic focus moves (step heading, activation-success status)
+       * must never paint a ring on a fresh load or after pointer interaction
+       * — a painted outline there reads as auto-selected text — while real
+       * keyboard input must bring the indicator back. The document element
+       * carries the last input modality; CSS scopes the heading/status rules
+       * to keyboard use, and real controls keep the normal :focus-visible
+       * behavior unconditionally.
+       */
+      const inputModalityRoot = document.documentElement;
+      document.addEventListener('keydown', () => { inputModalityRoot.dataset.input = 'keyboard'; }, true);
+      document.addEventListener('pointerdown', () => { inputModalityRoot.dataset.input = 'pointer'; }, true);
 
       grip?.addEventListener('click', () => setRail(rail?.getAttribute('data-state') === 'open' ? 'peek' : 'open'));
-      locate?.addEventListener('click', askPosition);
+      locate?.addEventListener('click', () => askPosition());
       filter?.addEventListener('change', () => { populateProviderFilter(); void loadCells(); });
       providerFilter?.addEventListener('change', () => render());
       districtFilter?.addEventListener('change', () => render());
       reportForm?.querySelectorAll<HTMLInputElement>('input[name="services"]').forEach((input) => input.addEventListener('change', renderProviderFields));
       void loadZones();
       void loadCells();
-      askPosition();
+      startOnboarding();
 
       reportForm?.addEventListener('submit', (event) => {
         event.preventDefault();
@@ -630,6 +1211,14 @@ import { siteNotice } from '../content.js';
        */
       .leaflet-tile-pane { filter: saturate(.35) brightness(1.06) contrast(.95); }
       .leaflet-container { background: var(--ground); font-family: inherit; }
+      /*
+       * The identity is fixed above the garden, so any control it overlapped
+       * would be unreachable. Collapsed it is a small badge far from the
+       * top-right strip, so the strip keeps Leaflet's own inset; expanded, JS
+       * measures the panel and publishes `--notice-clearance` to drop the
+       * controls below it. Both stay visible at once; neither is weakened.
+       */
+      .leaflet-top { top: var(--notice-clearance, .625rem); }
       .cell { filter: drop-shadow(0 1px 5px rgb(22 32 26 / .28)); }
 
       .leaflet-control-zoom a,
@@ -665,16 +1254,220 @@ import { siteNotice } from '../content.js';
         35% { box-shadow: 0 0 0 9px rgb(10 108 156 / 0), 0 2px 8px rgb(22 32 26 / .38); }
       }
 
-      /* The unofficial plate: always present, always level, never dismissible. */
+      /*
+       * The identity is permanent, but compact: the collapsed control is the
+       * standing non-official marker (icon + "No oficial", ~90px) and the full
+       * notice is one activation away inside the panel. Nothing here ever
+       * auto-hides — collapsing is always the visitor's own action.
+       */
+      .identity {
+        position: fixed; top: .75rem; left: .75rem; z-index: 700;
+        display: flex; flex-direction: column; align-items: flex-start; gap: .4rem;
+        max-width: min(44rem, calc(100% - 1.5rem));
+      }
+      .identity-toggle {
+        display: inline-flex; align-items: center; gap: .32rem;
+        padding: .36rem .64rem .36rem .48rem;
+        border: 1px solid var(--line); border-radius: 99px;
+        background: rgb(251 252 249 / .93); backdrop-filter: blur(10px);
+        box-shadow: 0 4px 14px rgb(22 32 26 / .14);
+        color: var(--muted); font: inherit; font-size: .74rem; font-weight: 800;
+        line-height: 1; white-space: nowrap; cursor: pointer;
+      }
+      .identity-toggle svg { width: 15px; height: 15px; flex: none; color: var(--ink); }
+      .identity-toggle:hover,
+      .identity-toggle[aria-expanded='true'] { color: var(--ink); border-color: var(--muted); }
+
+      /* The expanded panel: the wordmark and the full unofficial naming. */
       .plate {
-        position: fixed; inset: .75rem .75rem auto; z-index: 700; max-width: 44rem;
         display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem 1rem;
         padding: .7rem 1rem; border: 1px solid var(--line); border-radius: 14px;
         background: rgb(251 252 249 / .93); backdrop-filter: blur(10px);
         box-shadow: 0 6px 22px rgb(22 32 26 / .14);
+        animation: identity-open .2s cubic-bezier(.16, 1, .3, 1);
       }
+      /* An author `display` beats the UA `[hidden]` rule, so restate it. */
+      .plate[hidden] { display: none; }
+      @keyframes identity-open { from { opacity: 0; transform: translateY(-4px); } }
       .wordmark { margin: 0; font-family: Comfortaa, Nunito, sans-serif; font-weight: 700; font-size: 1.05rem; letter-spacing: -.01em; }
       .unofficial { margin: 0; color: var(--muted); font-size: .74rem; line-height: 1.4; max-width: 62ch; text-wrap: pretty; }
+
+      /*
+       * First-run onboarding: a section that comes *before* the map on every
+       * viewport, never a card parked inside it. The layer takes pointer
+       * events and paints the opaque daylight ground, so the map and rail
+       * behind it are unreachable until the visitor finishes or skips. Mobile
+       * stacks one column; the >=56rem block composes the same parts into two.
+       */
+      .onboarding {
+        position: fixed; inset: 0; z-index: 800; pointer-events: auto;
+        --onboarding-fade: 160ms;
+        background:
+          radial-gradient(72rem 46rem at 14% 24%, rgb(44 157 218 / .09), transparent 62%),
+          linear-gradient(168deg, var(--surface) 0%, var(--ground) 56%, #E5EBE3 100%);
+        transition: opacity var(--onboarding-fade, 160ms) ease;
+        animation: onboard-fade .4s cubic-bezier(.16, 1, .3, 1);
+      }
+      @keyframes onboard-fade { from { opacity: 0; } }
+      /* Entering the app is a fade too: the whole surface dissolves once the
+       * last step is done (or the visitor skips) before the layer is removed. */
+      .onboarding[data-closing='true'] { opacity: 0; }
+      /*
+       * Mobile geometry contract: the card IS the viewport. It is a flex
+       * column — illustration, then copy, then the navigation footer — and
+       * nothing inside it scrolls. The copy takes the height it needs
+       * (`flex: none`) and the illustration absorbs whatever is left
+       * (`flex: 1 1 auto; min-height: 0`), so a short phone shrinks the
+       * artwork instead of hiding prose behind a scrollbar. The top padding
+       * reserves the row the absolutely positioned "Omitir" control sits in.
+       */
+      .onboarding-card {
+        position: absolute; inset: 0;
+        display: flex; flex-direction: column;
+        padding:
+          calc(.9rem + env(safe-area-inset-top) + 1.9rem)
+          1.15rem
+          calc(1.15rem + env(safe-area-inset-bottom));
+        border: 0; background: transparent; box-shadow: none;
+        overflow: hidden;
+      }
+      /* The content column: heading, prose, actions, progress, legal. It takes
+       * its natural height and never scrolls — the stage yields instead. */
+      .onboarding-content { flex: none; display: flex; flex-direction: column; min-width: 0; overflow: visible; }
+      /*
+       * The stage absorbs the leftover height, so the copy and the navigation
+       * settle against the bottom edge within thumb reach instead of leaving a
+       * hole under them. The FIGURE, not the stage, is what carries the fixed
+       * size: it keeps `34dvh` on every step — step 2 has the activation
+       * control and step 4 the longest body, and sizing the box by "whatever
+       * the copy left over" rendered each step differently — and it is
+       * centred in whatever band the stage ends up with.
+       */
+      .onboarding-stage {
+        flex: 1 1 auto; min-height: 0;
+        display: flex; align-items: center; justify-content: center;
+      }
+      /*
+       * Step changes fade: the illustration and the content column dim out
+       * together, the copy swaps, and both come back. The duration lives in
+       * --onboarding-fade so script timings and CSS stay in lockstep.
+       */
+      .onboarding-stage, .onboarding-content { transition: opacity var(--onboarding-fade, 160ms) ease; }
+      .onboarding-card[data-fade='out'] .onboarding-stage,
+      .onboarding-card[data-fade='out'] .onboarding-content { opacity: 0; }
+      /*
+       * The head carries "Omitir". In the DOM it follows the step heading so
+       * a forward Tab from the open-time focus reaches skip first; `order: -1`
+       * keeps it visually on top of the card. `order` moves paint, never
+       * focus order.
+       */
+      .onboarding-head {
+        order: -1; display: flex; justify-content: flex-end; min-height: 1.1rem;
+        /* Lifted out of the flow on mobile: the illustration needs to paint
+         * above it while the control stays right after the heading in DOM
+         * order, which `order` alone could not deliver from inside the
+         * content column. The desktop block puts it back in the flow. */
+        position: absolute; top: calc(.9rem + env(safe-area-inset-top)); right: 1.15rem; z-index: 1;
+      }
+      .onboarding-skip {
+        margin: -.2rem -.2rem -.35rem auto; padding: .2rem .45rem;
+        border: 0; background: none; color: var(--muted);
+        font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer;
+      }
+      .onboarding-skip:hover { color: var(--ink); }
+      /*
+       * One box, every step. The assets are not one shape — `3onboard.webp` is
+       * 1080x810 while the other three are 810x1080 — so a figure sized only
+       * by height rendered the third step at a visibly different footprint.
+       * The figure is the standard instead: the artwork is contained inside
+       * it, centred and never cropped, so the footprint cannot change between
+       * steps.
+       */
+      .onboarding-figure {
+        display: flex; align-items: center; justify-content: center;
+        /* `max-height` is the give: a cramped phone shrinks the artwork rather
+         * than pushing prose behind a scrollbar. The height is shared by every
+         * step on purpose — three of the four assets are portrait (810x1080)
+         * and one is landscape (1080x810), so only a fixed box keeps the
+         * footprint from jumping. Growing step 1 alone would break that, so the
+         * box itself carries the 10%: 34dvh -> 37.4dvh, taken out of the slack
+         * the stage already had above and below the artwork on every step. */
+        width: 100%; height: 37.4dvh; max-height: 100%; min-height: 0; margin: 0 0 .5rem;
+      }
+      .onboarding-figure img { width: 100%; height: 100%; object-fit: contain; }
+      .onboarding-title {
+        margin: 0 0 .4rem; font-family: Comfortaa, Nunito, sans-serif; font-weight: 700;
+        font-size: 1.12rem; letter-spacing: -.02em; text-wrap: balance;
+      }
+      .onboarding-title:focus-visible { outline: none; }
+      /*
+       * The heading and the success status are focused by script, never by
+       * tabbing: they paint their ring only after genuine keyboard input
+       * (tracked as data-input on the document element), so the open-time
+       * focus on step 1 and the pointer-path success focus stay unpainted.
+       */
+      html[data-input='keyboard'] .onboarding-title:focus-visible { outline: 2px solid var(--agua); outline-offset: 3px; border-radius: 4px; }
+      .onboarding-body { margin: 0 0 .2rem; color: var(--muted); font-size: .88rem; line-height: 1.55; }
+      .onboarding-note { margin: .5rem 0 0; color: #8A5A00; font-size: .82rem; line-height: 1.5; font-weight: 600; }
+      /*
+       * Live regions must never leave the accessibility tree, so the empty
+       * state only drops the box (no display:none): the text insertion is
+       * what gets announced.
+       */
+      .onboarding-note:empty { margin: 0; }
+      /*
+       * Activation success lives inside the location step: it replaces the
+       * activate control, announces politely (role=status) and keeps the flow
+       * open — completion only happens on the last step.
+       */
+      .onboarding-success {
+        margin: .7rem 0 0; padding: .65rem .8rem; border-radius: 10px;
+        background: #EAF6EC; color: #1A7A3A; border: 1px solid #C2E7C8;
+        font-size: .85rem; line-height: 1.5; font-weight: 700;
+      }
+      .onboarding-success:empty { margin: 0; padding: 0; border: 0; background: transparent; }
+      .onboarding-success:focus-visible { outline: none; }
+      html[data-input='keyboard'] .onboarding-success:focus-visible { outline: 2px solid var(--agua); outline-offset: 3px; }
+      /*
+       * The integrated non-official naming. The first-run section owns the
+       * whole viewport on every size now, so the identity control is behind
+       * it and this line is what carries the naming on every step.
+       */
+      .onboarding-legal {
+        margin: .85rem 0 0; padding-top: .7rem; border-top: 1px solid var(--line);
+        color: var(--muted); font-size: .7rem; line-height: 1.5; text-wrap: pretty;
+      }
+      .onboarding-activate {
+        margin-top: .7rem; width: 100%; padding: .68rem; font: inherit; font-weight: 800; font-size: .9rem;
+        color: #fff; background: var(--agua); border: 0; border-radius: 12px; cursor: pointer;
+      }
+      .onboarding-activate:hover { background: #085C85; }
+      .onboarding-activate[data-busy] { color: rgb(255 255 255 / .75); cursor: progress; }
+      .onboarding-meta { display: flex; align-items: center; gap: .55rem; margin-top: .95rem; }
+      .onboarding-dots { display: flex; gap: .3rem; }
+      .onboarding-dots span { width: 6px; height: 6px; border-radius: 99px; background: var(--line); }
+      .onboarding-dots span[data-active] { background: var(--ink); }
+      .onboarding-progress { margin: 0; color: var(--muted); font-size: .74rem; font-variant-numeric: tabular-nums; }
+      .onboarding-nav { display: flex; gap: .55rem; }
+      /*
+       * The step navigation is the card's last row — a flex child below the
+       * content, never a sticky overlay — so it stays visible and hit-test
+       * reachable on every step, including the location step before and after
+       * activation, and can never paint over step copy. (Mobile-only; the
+       * desktop composition resets it into its grid row.)
+       */
+      .onboarding-nav { flex: none; margin: .85rem 0 0; }
+      .onboarding-ghost {
+        padding: .62rem .9rem; font: inherit; font-size: .86rem; font-weight: 700;
+        color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 12px; cursor: pointer;
+      }
+      .onboarding-ghost:hover { border-color: var(--muted); }
+      .onboarding-ghost:disabled { color: var(--muted); opacity: .55; cursor: default; }
+      .onboarding-primary {
+        flex: 1; padding: .68rem; font: inherit; font-weight: 800; font-size: .9rem;
+        color: #fff; background: var(--ink); border: 0; border-radius: 12px; cursor: pointer;
+      }
+      .onboarding-primary:hover { background: #0B120E; }
 
       /* The thank-you modal: a native dialog styled into the daylight world. */
       #thanks {
@@ -747,6 +1540,62 @@ import { siteNotice } from '../content.js';
       }
 
       .rail-body { overflow-y: auto; padding: .6rem 1.15rem calc(1.4rem + env(safe-area-inset-bottom)); }
+
+      /*
+       * The mobile tab strip: two halves of one track, so the split reads as a
+       * single control rather than two loose buttons. Hidden until
+       * `watchRailTabs` wires it, and dropped entirely from 56rem — the desktop
+       * rail shows both panels at once, as it always has.
+       */
+      .rail-tabs {
+        display: grid; grid-template-columns: 1fr 1fr; gap: .25rem;
+        margin: 0 0 1.15rem; padding: .25rem;
+        border: 1px solid var(--line); border-radius: 99px; background: var(--ground);
+      }
+      .rail-tabs[hidden] { display: none; }
+      .rail-tab {
+        padding: .5rem .75rem; border: 0; border-radius: 99px;
+        background: none; color: var(--muted);
+        font: inherit; font-size: .87rem; font-weight: 700; cursor: pointer;
+        transition: background-color .18s ease, color .18s ease;
+      }
+      .rail-tab[aria-selected='true'] {
+        background: var(--surface); color: var(--ink);
+        box-shadow: 0 1px 3px rgb(22 32 26 / .12);
+      }
+      /*
+       * Only the selected tab is in the tab sequence; the arrow keys move
+       * between them. That is the tablist keyboard contract, and it keeps one
+       * Tab press moving from the strip into the panel it opened.
+       */
+      .rail-tab:focus-visible { outline: 2px solid var(--agua); outline-offset: -2px; }
+      /*
+       * The inactive panel is `display: none`, not `visibility` or a clip: it
+       * has to leave the accessibility tree and the tab sequence too, or the
+       * form the visitor cannot see still collects their Tab presses.
+       */
+      .rail-body[data-tabs='on'] > .panel[data-tab-state='inactive'] { display: none; }
+      /*
+       * The panels carry a rule on top to separate them from each other. Behind
+       * tabs only one shows at a time, directly under the strip, which already
+       * does that job — so the rule would just be a second line under a line.
+       */
+      .rail-body[data-tabs='on'] > .panel { padding-top: .25rem; border-top: 0; }
+      /*
+       * The lede is the confirmation rule ("three distinct neighbours…"), and on
+       * a phone it was 67px of framing sitting on the path to the primary
+       * action: the report tab needed 526px of a 489px sheet, so the submit
+       * button was below the fold — the exact overload the tabs were supposed to
+       * end. It is not deleted, because a visitor who skipped the onboarding has
+       * no other place to learn the rule. It shows on the reports tab instead,
+       * which is where "sin confirmar" actually appears in the list, and where
+       * it still fits without scrolling. The report tab then holds its whole
+       * form at once (443px) and hands ~46px back to the map.
+       *
+       * Scoped to `[data-tabs='on']`, so the desktop rail — one column with room
+       * for everything — keeps the lede under the heading exactly as before.
+       */
+      .rail-body[data-tabs='on']:has(> #report-panel[data-tab-state='active']) > .lede { display: none; }
 
       h1 {
         margin: .1rem 0 .45rem; font-family: Comfortaa, Nunito, sans-serif; font-weight: 700;
@@ -843,12 +1692,67 @@ import { siteNotice } from '../content.js';
         .grip { display: none; }
         .answer { padding: 1.9rem 1.5rem .25rem; font-size: 1.1rem; }
         .rail-body { padding: .6rem 1.5rem 2rem; }
-        .plate { left: 26.5rem; }
+        /* The column has room for both panels, so the split never applies here.
+         * `watchRailTabs` drops the matching ARIA so the two agree. */
+        .rail-tabs { display: none; }
+        .identity { left: 26.5rem; }
+        /*
+         * Desktop composition: the same owned viewport, laid out as a
+         * two-column editorial spread — large illustration on the left,
+         * content and actions on the right. Ownership itself (pointer events,
+         * the daylight ground, the entrance fade) is in the base rules now,
+         * because mobile owns the viewport too.
+         */
+        .onboarding-card {
+          position: relative; inset: auto;
+          width: 100%; height: 100dvh;
+          display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+          grid-template-rows: minmax(0, 1fr) auto;
+          align-items: stretch;
+          column-gap: clamp(2.5rem, 6vw, 6rem);
+          padding: 2.5rem clamp(2.25rem, 7vw, 6.5rem);
+          overflow: visible;
+        }
+        .onboarding-stage {
+          grid-column: 1; grid-row: 1 / -1;
+          flex: none; height: auto; min-width: 0; min-height: 0;
+        }
+        /* The same standardized box, sized for the column. */
+        .onboarding-figure { height: 100%; max-height: min(76dvh, 44rem); width: 100%; max-width: 42rem; margin: 0; }
+        .onboarding-content {
+          grid-column: 2; grid-row: 1;
+          justify-content: center;
+          max-width: 34rem;
+          overflow: visible;
+        }
+        /* Back in the flow: the right column has room for it above the heading. */
+        .onboarding-head { position: static; margin: 0 0 1.3rem; }
+        .onboarding-skip { font-size: .84rem; }
+        .onboarding-title {
+          margin: 0 0 .95rem;
+          font-size: clamp(1.85rem, 3vw, 2.7rem); line-height: 1.12;
+        }
+        .onboarding-body { margin: 0 0 .5rem; font-size: 1.04rem; line-height: 1.6; max-width: 52ch; }
+        .onboarding-note { margin-top: 1.35rem; font-size: .88rem; max-width: 32rem; }
+        .onboarding-success { margin: 1.35rem 0 0; max-width: 26rem; font-size: .92rem; }
+        .onboarding-activate { margin: 1.5rem 0 0; width: 100%; max-width: 24rem; padding: .8rem; font-size: .98rem; }
+        .onboarding-meta { margin-top: 1.7rem; }
+        .onboarding-dots span { width: 7px; height: 7px; }
+        .onboarding-progress { font-size: .8rem; }
+        .onboarding-nav { grid-column: 2; grid-row: 2; flex: none; margin-top: .7rem; max-width: 24rem; }
+        .onboarding-ghost { padding: .72rem .95rem; font-size: .92rem; }
+        .onboarding-primary { padding: .78rem; font-size: .97rem; }
+        .onboarding-legal {
+          margin: 2.2rem 0 0; padding-top: 1rem;
+          font-size: .78rem; line-height: 1.55; max-width: 46ch;
+        }
       }
 
       @media (prefers-reduced-motion: reduce) {
         .rail, #submit { transition: none; }
         .me span { animation: none; }
+        .onboarding { animation: none; }
+        .onboarding-stage, .onboarding-content, .onboarding { transition: none; }
       }
     </style>
   </body>

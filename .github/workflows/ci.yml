@@ -6,6 +6,22 @@ on:
     branches: [develop, master]
 
 jobs:
+  # The dependency audit is its own job on purpose. It used to run first inside
+  # `verify`, so a failing audit aborted the job and every functional step was
+  # reported as skipped — a red CI with no verification evidence at all, and no
+  # way for a reviewer to tell whether the branch was healthy. Splitting keeps
+  # the audit required and visible while letting the real checks always run.
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          cache: npm
+          node-version: 22
+      - run: npm ci
+      - run: npm audit --audit-level=high
+
   verify:
     runs-on: ubuntu-latest
     services:
@@ -32,7 +48,6 @@ jobs:
           node-version: 22
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm audit --audit-level=high
       - run: npm run check
       - run: npm run test:integration
       - run: npm run test:e2e

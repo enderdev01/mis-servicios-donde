@@ -6,5 +6,9 @@ dist/
 .astro/
 playwright-report/
 test-results/
+.playwright-cli/
 .env
 .DS_Store
+.wrangler/
+.dev.vars
+apps/worker/worker-configuration.d.ts

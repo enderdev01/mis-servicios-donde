@@ -2,7 +2,13 @@
   "$schema": "https://json.schemastore.org/nest-cli",
   "compilerOptions": {
     "deleteOutDir": true,
-    "tsConfigPath": "tsconfig.build.json"
+    "tsConfigPath": "tsconfig.build.json",
+    "assets": [
+      {
+        "include": "../prisma/migrations/**/*.sql",
+        "outDir": "./dist/prisma"
+      }
+    ]
   },
   "sourceRoot": "src"
 }

@@ -1,0 +1,25 @@
+{
+  "name": "@mis-servicios/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "wrangler types --include-env=false && tsc --noEmit",
+    "test:unit": "vitest run --config vitest.config.ts",
+    "types": "wrangler types --include-env=false",
+    "prepare": "wrangler types --include-env=false"
+  },
+  "dependencies": {
+    "@mis-servicios/contracts": "*",
+    "h3-js": "^4.5.0",
+    "hono": "^4.13.14",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1",
+    "wrangler": "^4.156.0"
+  }
+}

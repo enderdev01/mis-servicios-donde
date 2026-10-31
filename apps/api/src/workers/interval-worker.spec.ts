@@ -40,6 +40,30 @@ describe('interval worker', () => {
     worker.stop();
   });
 
+  it('schedules the longer delay a cycle requests when it resolves to a number', async () => {
+    const run = vi.fn().mockResolvedValue(50_000);
+
+    const worker = startIntervalWorker(run, 1000);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(49_999);
+    expect(run).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(run).toHaveBeenCalledTimes(2);
+    worker.stop();
+  });
+
+  it('retries a failing cycle on the next tick at the base interval', async () => {
+    const run = vi.fn().mockRejectedValueOnce(new Error('outbox unreachable')).mockResolvedValue(50_000);
+
+    const worker = startIntervalWorker(run, 1000);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(run).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(run).toHaveBeenCalledTimes(2);
+    worker.stop();
+  });
+
   it('stops re-arming once stopped', async () => {
     const run = vi.fn().mockResolvedValue(undefined);
 
@@ -49,6 +73,30 @@ describe('interval worker', () => {
     await vi.advanceTimersByTimeAsync(10000);
 
     expect(run).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('cycle delay decision', () => {
+  it('clamps a requested delay to the configured bounds', async () => {
+    const { clampCycleDelayMs } = await import('./interval-worker.js');
+
+    expect(clampCycleDelayMs(90_000, 30_000, 1_800_000)).toBe(90_000);
+    expect(clampCycleDelayMs(5_000, 30_000, 1_800_000)).toBe(30_000);
+    expect(clampCycleDelayMs(7_200_000, 30_000, 1_800_000)).toBe(1_800_000);
+  });
+
+  it('falls back to the interval when a cycle does not resolve to a number', async () => {
+    const { nextCycleDelayMs } = await import('./interval-worker.js');
+
+    expect(nextCycleDelayMs(undefined, 1000)).toBe(1000);
+    expect(nextCycleDelayMs({ claimedWork: false }, 1000)).toBe(1000);
+    expect(nextCycleDelayMs(Number.NaN, 1000)).toBe(1000);
+  });
+
+  it('never re-arms sooner than the interval even when a cycle requests less', async () => {
+    const { nextCycleDelayMs } = await import('./interval-worker.js');
+
+    expect(nextCycleDelayMs(10, 1000)).toBe(1000);
   });
 });
 

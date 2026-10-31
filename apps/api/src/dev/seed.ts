@@ -2,6 +2,8 @@ import { readdir, readFile } from 'node:fs/promises';
 
 import pg from 'pg';
 
+import { pilotZoneSeeds } from './pilot-zones.js';
+
 /**
  * Development data, reproducible on demand.
  *
@@ -9,13 +11,6 @@ import pg from 'pg';
  * without a real bounding box matches no report, so a half-seeded database looks
  * exactly like a broken one. Running this is the difference.
  */
-const zones = [
-  { slug: 'brena', name: 'Breña', boundary: { minLatitude: -12.070, maxLatitude: -12.045, minLongitude: -77.060, maxLongitude: -77.035 } },
-  { slug: 'cercado-de-lima', name: 'Cercado de Lima', boundary: { minLatitude: -12.060, maxLatitude: -12.035, minLongitude: -77.045, maxLongitude: -77.020 } },
-  { slug: 'jesus-maria', name: 'Jesús María', boundary: { minLatitude: -12.095, maxLatitude: -12.070, minLongitude: -77.065, maxLongitude: -77.040 } },
-  { slug: 'rimac', name: 'Rímac', boundary: { minLatitude: -12.045, maxLatitude: -12.005, minLongitude: -77.050, maxLongitude: -77.000 } },
-];
-
 const databaseUrl = process.env.DATABASE_URL ?? 'postgresql://mis_servicios:mis_servicios@127.0.0.1:54329/mis_servicios';
 
 if (databaseUrl.endsWith('_test')) {
@@ -37,7 +32,7 @@ try {
     console.log(`applied migrations`);
   }
 
-  for (const zone of zones) {
+  for (const zone of pilotZoneSeeds) {
     await pool.query(
       `INSERT INTO "PilotZone" ("slug", "name", "approved", "boundary") VALUES ($1, $2, true, $3::jsonb)
        ON CONFLICT ("slug") DO UPDATE SET "name" = EXCLUDED."name", "approved" = true, "boundary" = EXCLUDED."boundary"`,

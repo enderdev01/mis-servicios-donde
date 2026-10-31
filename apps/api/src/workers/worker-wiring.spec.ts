@@ -56,4 +56,71 @@ describe('worker wiring', () => {
     expect(dispatchPending.mock.calls.length).toBeGreaterThan(1);
     worker.stop();
   });
+
+  it('waits for the idle interval after an empty outbox instead of the dispatch interval', async () => {
+    const dispatchPending = vi.fn().mockResolvedValue({ claimedWork: false, nextDueInSeconds: null });
+
+    const worker = startAlertDispatchWorker({ dispatchPending } as unknown as AlertsService);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(dispatchPending).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_770_000);
+    expect(dispatchPending).toHaveBeenCalledTimes(2);
+    worker.stop();
+  });
+
+  it('keeps the dispatch interval while the outbox claimed work', async () => {
+    const dispatchPending = vi.fn().mockResolvedValue({ claimedWork: true, nextDueInSeconds: null });
+
+    const worker = startAlertDispatchWorker({ dispatchPending } as unknown as AlertsService);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(dispatchPending).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(dispatchPending).toHaveBeenCalledTimes(2);
+    worker.stop();
+  });
+
+  it('warns once at startup when the idle interval sits below the dispatch interval', async () => {
+    const previousInterval = process.env.ALERT_DISPATCH_INTERVAL_SECONDS;
+    const previousIdle = process.env.ALERT_DISPATCH_IDLE_INTERVAL_SECONDS;
+    process.env.ALERT_DISPATCH_INTERVAL_SECONDS = '3600';
+    process.env.ALERT_DISPATCH_IDLE_INTERVAL_SECONDS = '1800';
+    vi.resetModules();
+    try {
+      const { startAlertDispatchWorker } = await import('../alerts/alerts.service.js');
+      const dispatchPending = vi.fn().mockResolvedValue({ claimedWork: false, nextDueInSeconds: null });
+      const warn = vi.fn();
+
+      const worker = startAlertDispatchWorker({ dispatchPending } as unknown as AlertsService, warn);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(3_600_000);
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toContain('ALERT_DISPATCH_IDLE_INTERVAL_SECONDS');
+      expect(warn.mock.calls[0]?.[0]).toContain('ALERT_DISPATCH_INTERVAL_SECONDS');
+      expect(dispatchPending).toHaveBeenCalledTimes(2);
+      worker.stop();
+    } finally {
+      if (previousInterval === undefined) delete process.env.ALERT_DISPATCH_INTERVAL_SECONDS; else process.env.ALERT_DISPATCH_INTERVAL_SECONDS = previousInterval;
+      if (previousIdle === undefined) delete process.env.ALERT_DISPATCH_IDLE_INTERVAL_SECONDS; else process.env.ALERT_DISPATCH_IDLE_INTERVAL_SECONDS = previousIdle;
+    }
+  });
+
+  it('does not warn at startup when the idle interval already honors the dispatch floor', async () => {
+    const previousIdle = process.env.ALERT_DISPATCH_IDLE_INTERVAL_SECONDS;
+    delete process.env.ALERT_DISPATCH_IDLE_INTERVAL_SECONDS;
+    try {
+      const dispatchPending = vi.fn().mockResolvedValue({ claimedWork: false, nextDueInSeconds: null });
+      const warn = vi.fn();
+
+      const worker = startAlertDispatchWorker({ dispatchPending } as unknown as AlertsService, warn);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(warn).not.toHaveBeenCalled();
+      worker.stop();
+    } finally {
+      if (previousIdle === undefined) delete process.env.ALERT_DISPATCH_IDLE_INTERVAL_SECONDS; else process.env.ALERT_DISPATCH_IDLE_INTERVAL_SECONDS = previousIdle;
+    }
+  });
 });

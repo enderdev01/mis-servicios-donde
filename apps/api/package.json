@@ -4,20 +4,21 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "nest build",
+    "build": "nest build && node scripts/copy-migrations.mjs",
     "start": "node --env-file-if-exists=../../.env dist/main.js",
     "start:dev": "nest start --watch",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest run --config vitest.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "db:migrate:deploy": "node --env-file-if-exists=../../.env dist/database/migrate.js",
     "retention:purge": "node --env-file-if-exists=../../.env dist/retention/purge.js",
     "db:seed": "node --env-file-if-exists=../../.env dist/dev/seed.js"
   },
   "dependencies": {
     "@mis-servicios/contracts": "*",
-    "@nestjs/common": "^11.2.3",
-    "@nestjs/core": "^11.2.3",
-    "@nestjs/platform-express": "^11.2.3",
+    "@nestjs/common": "^12.0.3",
+    "@nestjs/core": "^12.0.3",
+    "@nestjs/platform-express": "^12.0.3",
     "h3-js": "^4.5.0",
     "helmet": "^8.3.0",
     "pg": "^8.23.0",
@@ -25,8 +26,8 @@
     "rxjs": "^7.8.2"
   },
   "devDependencies": {
-    "@nestjs/cli": "^11.0.24",
-    "@nestjs/testing": "^11.2.3",
+    "@nestjs/cli": "^12.0.3",
+    "@nestjs/testing": "^12.0.3",
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.2.1",
     "supertest": "^7.2.2"

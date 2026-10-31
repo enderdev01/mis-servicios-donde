@@ -199,25 +199,28 @@ describe('outage consensus', () => {
   });
 
   it('keeps cell, service, and status quorums isolated', async () => {
+    await Promise.all(['other-a', 'other-b', 'other-c'].map((id) => submit(id, id, { providers: { water: 'other' } })));
     await Promise.all([
       submit('electric-a', 'electric-a', { services: ['electricity'], providers: { electricity: 'luz_del_sur' } }),
       submit('electric-b', 'electric-b', { services: ['electricity'], providers: { electricity: 'luz_del_sur' } }),
       submit('electric-c', 'electric-c', { services: ['electricity'], providers: { electricity: 'luz_del_sur' } }),
-      submit('restored-a', 'restored-a', { status: 'restored' }),
-      submit('restored-b', 'restored-b', { status: 'restored' }),
-      submit('restored-c', 'restored-c', { status: 'restored' }),
+      submit('restored-a', 'restored-a', { providers: { water: 'other' }, status: 'restored' }),
+      submit('restored-b', 'restored-b', { providers: { water: 'other' }, status: 'restored' }),
+      submit('restored-c', 'restored-c', { providers: { water: 'other' }, status: 'restored' }),
     ]);
 
-    const episodes = await database.query<{ service: string; active: boolean; closureReason: string | null }>(
-      `SELECT "service", "active", "closureReason" FROM "OutageEpisode" WHERE "h3Cell" = (SELECT "h3Cell" FROM "ReportEvent" WHERE "submissionId" = (SELECT "id" FROM "SubmissionRecord" WHERE "submissionId" = 'consensus-a')) ORDER BY "service"::text`,
+    const episodes = await database.query<{ service: string; provider: string; active: boolean; closureReason: string | null }>(
+      `SELECT "service", "provider", "active", "closureReason" FROM "OutageEpisode" WHERE "h3Cell" = (SELECT "h3Cell" FROM "ReportEvent" WHERE "submissionId" = (SELECT "id" FROM "SubmissionRecord" WHERE "submissionId" = 'consensus-a')) ORDER BY "service"::text, "provider"::text`,
     );
     expect(episodes.rows).toEqual([
-      { service: 'electricity', active: true, closureReason: null },
-      { service: 'water', active: false, closureReason: 'restored' },
+      { service: 'electricity', provider: 'luz_del_sur', active: true, closureReason: null },
+      { service: 'water', provider: 'other', active: false, closureReason: 'restored' },
+      { service: 'water', provider: 'sedapal', active: true, closureReason: null },
     ]);
 
-    await Promise.all(['reopened-a', 'reopened-b', 'reopened-c'].map((id) => submit(id, id)));
-    expect((await database.query<{ count: string }>('SELECT count(*) FROM "OutageEpisode" WHERE "service" = \'water\'', [])).rows[0]?.count).toBe('2');
+    await Promise.all(['reopened-a', 'reopened-b', 'reopened-c'].map((id) => submit(id, id, { providers: { water: 'other' } })));
+    expect((await database.query<{ count: string }>('SELECT count(*) FROM "OutageEpisode" WHERE "service" = \'water\' AND "provider" = \'other\'', [])).rows[0]?.count).toBe('2');
+    await database.query(`UPDATE "OutageEpisode" SET "active" = false, "closedAt" = CURRENT_TIMESTAMP, "closureReason" = 'expired'::"EpisodeClosureReason" WHERE "service" = 'water' AND "provider" = 'other' AND "active" = true`);
   });
 
   it('refreshes only after a later quorum and closes stale episodes without publishing them', async () => {
