@@ -200,6 +200,10 @@ A `500` from either data endpoint means the API cannot reach the database, not t
 - It fails on a checksum mismatch by design. Never edit a migration that has already been applied; add a new one.
 - Moving providers does not change the product gates. Keep them disabled until the three checks above return `200`.
 
+## Cloudflare Worker
+
+Production runs `apps/worker` as a Cloudflare Worker with Hyperdrive; see [apps/worker/README.md](apps/worker/README.md) for the deploy steps and the differences from this Node API.
+
 ## Privacy and retention
 
 - Coordinates are used to derive an H3 cell and must never be persisted or logged.
