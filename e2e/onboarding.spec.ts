@@ -49,7 +49,7 @@ test('walks a first visit through four illustrated steps', async ({ page }) => {
   await expect(onboarding.getByRole('button', { name: 'Activar ubicación' })).toBeVisible();
 
   await onboarding.getByRole('button', { name: 'Siguiente' }).click();
-  await expect(onboarding.locator('.onboarding-title')).toContainText('Reporta en dos toques');
+  await expect(onboarding.locator('.onboarding-title')).toContainText('Reporta en pocos toques');
   await expect(onboarding.locator('.onboarding-body')).toContainText('No hay servicio');
 
   await onboarding.getByRole('button', { name: 'Siguiente' }).click();
@@ -261,6 +261,7 @@ test('falls back to a usable map when location is denied', async ({ page }) => {
   // the card) was measured at 390x844, so the mobile contract is asserted there.
   await page.setViewportSize({ width: 390, height: 844 });
   const geo = await spyGeolocation(page, 'denied');
+  await page.route('**/v1/cells', (route) => route.fulfill({ json: [] }));
   await page.goto('/');
 
   const onboarding = page.getByRole('region', { name: 'Introducción al mapa comunitario' });
@@ -283,7 +284,7 @@ test('falls back to a usable map when location is denied', async ({ page }) => {
   await assertNoInternalScroll(page, 'the location step after a denial');
 
   // Denial never takes the map down: the aggregate still loads as text.
-  await expect(page.locator('#map-state')).toContainText('No hay cortes reportados en este momento.');
+  await expect(page.locator('#map-state')).toContainText('Nadie ha reportado cortes en la zona piloto.');
 
   await onboarding.getByRole('button', { name: 'Siguiente' }).click();
   await expect(onboarding.locator('.onboarding-progress')).toContainText('Paso 3 de 4');
@@ -322,6 +323,7 @@ test('stays closed after completing every step', async ({ page }) => {
  * Both cadences below finish in exactly one tap per step.
  */
 test('finishes on the last tap when the steps are tapped faster than the fade', async ({ page }) => {
+  await page.route('**/v1/cells', (route) => route.fulfill({ json: [] }));
   await page.goto('/');
 
   const onboarding = page.getByRole('region', { name: 'Introducción al mapa comunitario' });
@@ -333,7 +335,7 @@ test('finishes on the last tap when the steps are tapped faster than the fade', 
   for (let tap = 0; tap < 4; tap += 1) await card.getByRole('button').last().click();
 
   await expect(onboarding).toBeHidden();
-  await expect(page.getByRole('status')).toContainText('No hay cortes reportados en este momento.');
+  await expect(page.getByRole('status')).toContainText('Nadie ha reportado cortes en la zona piloto.');
   // Completion is what persisted, so the map is not re-covered on the next visit.
   await page.reload();
   await expect(page.getByRole('region', { name: 'Introducción al mapa comunitario' })).toBeHidden();
@@ -357,6 +359,7 @@ test('finishes when every tap lands in the same tick', async ({ page }) => {
 });
 
 test('closes with Escape and keeps the map useful after skipping', async ({ page }) => {
+  await page.route('**/v1/cells', (route) => route.fulfill({ json: [] }));
   await page.goto('/');
 
   const onboarding = page.getByRole('region', { name: 'Introducción al mapa comunitario' });
@@ -368,7 +371,7 @@ test('closes with Escape and keeps the map useful after skipping', async ({ page
   await expect(onboarding).toBeHidden();
   await expect(page.getByRole('heading', { name: '¿Es solo tu casa?' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Enviar reporte' })).toBeVisible();
-  await expect(page.getByRole('status')).toContainText('No hay cortes reportados en este momento.');
+  await expect(page.getByRole('status')).toContainText('Nadie ha reportado cortes en la zona piloto.');
 });
 
 /**
@@ -609,6 +612,7 @@ for (const [width, height] of [[1440, 900], [900, 844]] as const) {
 
   test(`keeps Escape and skip working on the ${width}x${height} desktop surface`, async ({ page }) => {
     await page.setViewportSize({ width, height });
+    await page.route('**/v1/cells', (route) => route.fulfill({ json: [] }));
     await page.goto('/');
 
     const onboarding = page.getByRole('region', { name: 'Introducción al mapa comunitario' });
@@ -618,7 +622,7 @@ for (const [width, height] of [[1440, 900], [900, 844]] as const) {
     await page.reload();
     await expect(onboarding).toBeHidden();
     // The map is usable right after the first visit ends.
-    await expect(page.getByRole('status')).toContainText('No hay cortes reportados en este momento.');
+    await expect(page.getByRole('status')).toContainText('Nadie ha reportado cortes en la zona piloto.');
   });
 }
 

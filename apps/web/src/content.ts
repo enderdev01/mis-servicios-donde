@@ -28,7 +28,7 @@ export const onboardingSteps: OnboardingStep[] = [
   {
     id: 'community',
     title: 'Un mapa hecho por vecinos',
-    body: 'Los cortes de agua, luz e internet que ves aquí los reportan vecinos como tú. Es información de la comunidad, no oficial: no es un canal de Sedapal ni de Luz del Sur ni de ningún proveedor.',
+    body: 'Los cortes de agua, luz e internet que ves aquí los reportan vecinos como tú, no las empresas.',
     image: '/onboarding/1onboard.webp',
     alt: 'Ilustración de vecinos en un barrio con un mapa que marca zonas con cortes.',
   },
@@ -41,15 +41,15 @@ export const onboardingSteps: OnboardingStep[] = [
   },
   {
     id: 'report',
-    title: 'Reporta en dos toques',
-    body: 'Elige los servicios afectados y di qué pasa: "No hay servicio" o "Ya volvió". Avisar de que volvió el servicio ayuda tanto como avisar del corte.',
+    title: 'Reporta en pocos toques',
+    body: 'Elige el servicio y la empresa, y di qué pasa: «No hay servicio» o «Ya volvió». Avisar de que volvió el servicio ayuda tanto como avisar del corte.',
     image: '/onboarding/3onboard.webp',
     alt: 'Ilustración de un vecino eligiendo servicios afectados en su teléfono para enviar un reporte.',
   },
   {
     id: 'publication',
     title: 'Cómo se publica tu reporte',
-    body: 'Tu primer reporte aparece como "sin confirmar". Cuando tres vecinos distintos reportan lo mismo en la zona, el corte queda confirmado. Puedes enviar un reporte por dispositivo, servicio y estado cada hora, y solo dentro de las zonas piloto aprobadas.',
+    body: 'Tu primer reporte aparece como «sin confirmar». Cuando tres vecinos distintos reportan lo mismo en la zona, el corte queda confirmado. Puedes enviar un reporte por dispositivo, servicio y estado cada hora, y solo dentro de las zonas piloto aprobadas.',
     image: '/onboarding/4onboard.webp',
     alt: 'Ilustración de tres vecinos distintos reportando lo mismo y el corte quedando confirmado en el mapa.',
   },

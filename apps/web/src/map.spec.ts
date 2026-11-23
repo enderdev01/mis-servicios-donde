@@ -24,30 +24,25 @@ const limaCell = latLngToCell(-12.0464, -77.0428, 9);
 describe('public cell projection', () => {
   it('keeps only the public fields', () => {
     expect(toPublicCells([{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true, reports: 2, deviceToken: 'never-public' }]))
-      .toEqual([{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true, reports: 2 }]);
-  });
-
-  it('drops entries without an explicit report count', () => {
-    expect(toPublicCells([{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true }])).toEqual([]);
+      .toEqual([{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true }]);
   });
 
   it('drops unknown services and malformed entries', () => {
-    expect(toPublicCells([{ h3Cell: limaCell, service: 'gas', provider: 'other', confirmed: true, reports: 1 }, { service: 'water', provider: 'sedapal', confirmed: true, reports: 1 }, null, 'water'])).toEqual([]);
+    expect(toPublicCells([{ h3Cell: limaCell, service: 'gas', provider: 'other', confirmed: true }, { service: 'water', provider: 'sedapal', confirmed: true }, null, 'water'])).toEqual([]);
   });
 
   it('answers an empty list when the payload is not an array', () => {
-    expect(toPublicCells({ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true, reports: 1 })).toEqual([]);
+    expect(toPublicCells({ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true })).toEqual([]);
   });
 });
 
 describe('cell geometry', () => {
-  it('turns a confirmed cell into a soft blob carrying its report count', () => {
-    const [blob] = toCellBlobs([{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true, reports: 3 }]);
+  it('turns a confirmed cell into a soft blob', () => {
+    const [blob] = toCellBlobs([{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true }]);
 
     expect(blob?.service).toBe('water');
     expect(blob?.h3Cells).toEqual([limaCell]);
     expect(blob?.confirmed).toBe(true);
-    expect(blob?.reports).toBe(3);
     expect(blob?.centre).toHaveLength(2);
     expect(blob?.radiusMetres).toBe(120);
   });
@@ -57,12 +52,11 @@ describe('cell geometry', () => {
     expect(adjacentCell).toBeDefined();
 
     const [blob] = toCellBlobs([
-      { h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true, reports: 3 },
-      { h3Cell: adjacentCell!, service: 'water', provider: 'sedapal', confirmed: false, reports: 1 },
+      { h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true },
+      { h3Cell: adjacentCell!, service: 'water', provider: 'sedapal', confirmed: false },
     ]);
 
     expect(blob?.h3Cells).toHaveLength(2);
-    expect(blob?.reports).toBe(4);
     expect(blob?.confirmed).toBe(false);
     expect(blob?.radiusMetres).toBeGreaterThan(120);
   });
@@ -72,8 +66,8 @@ describe('cell geometry', () => {
     expect(adjacentCell).toBeDefined();
 
     const blobs = toCellBlobs([
-      { h3Cell: limaCell, service: 'electricity', provider: 'luz_del_sur', confirmed: true, reports: 3 },
-      { h3Cell: adjacentCell!, service: 'electricity', provider: 'pluz', confirmed: true, reports: 3 },
+      { h3Cell: limaCell, service: 'electricity', provider: 'luz_del_sur', confirmed: true },
+      { h3Cell: adjacentCell!, service: 'electricity', provider: 'pluz', confirmed: true },
     ]);
 
     expect(blobs).toHaveLength(2);
@@ -81,8 +75,8 @@ describe('cell geometry', () => {
   });
 
   it('keeps the same geographic footprint for pending and confirmed cells', () => {
-    const [confirmed] = toCellBlobs([{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true, reports: 3 }]);
-    const [pending] = toCellBlobs([{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: false, reports: 1 }]);
+    const [confirmed] = toCellBlobs([{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true }]);
+    const [pending] = toCellBlobs([{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: false }]);
 
     expect(pending?.radiusMetres).toBe(confirmed?.radiusMetres);
     expect(pending?.radiusMetres).toBe(120);
@@ -90,8 +84,8 @@ describe('cell geometry', () => {
 
   it('gives each co-located service its own blob at the true centre', () => {
     const blobs = toCellBlobs([
-      { h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true, reports: 3 },
-      { h3Cell: limaCell, service: 'electricity', provider: 'luz_del_sur', confirmed: true, reports: 3 },
+      { h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true },
+      { h3Cell: limaCell, service: 'electricity', provider: 'luz_del_sur', confirmed: true },
     ]);
 
     expect(blobs).toHaveLength(2);
@@ -100,7 +94,7 @@ describe('cell geometry', () => {
   });
 
   it('discards an invalid index instead of placing a blob in the ocean', () => {
-    expect(toCellBlobs([{ h3Cell: '8999999999fffff', service: 'water', provider: 'sedapal', confirmed: true, reports: 1 }])).toEqual([]);
+    expect(toCellBlobs([{ h3Cell: '8999999999fffff', service: 'water', provider: 'sedapal', confirmed: true }])).toEqual([]);
   });
 
   it('checks the visitor position against the same H3 cell locally', () => {
@@ -116,8 +110,8 @@ describe('viewport bounds', () => {
 
   it('wraps every blob centre', () => {
     const bounds = boundsOf([
-      { service: 'water', provider: 'sedapal', h3Cells: [limaCell], centre: [-12, -77], confirmed: true, reports: 1, radiusMetres: 500 },
-      { service: 'internet', provider: 'movistar', h3Cells: [limaCell], centre: [-11.5, -76.5], confirmed: true, reports: 1, radiusMetres: 500 },
+      { service: 'water', provider: 'sedapal', h3Cells: [limaCell], centre: [-12, -77], confirmed: true, radiusMetres: 500 },
+      { service: 'internet', provider: 'movistar', h3Cells: [limaCell], centre: [-11.5, -76.5], confirmed: true, radiusMetres: 500 },
     ]);
 
     expect(bounds?.[0][0]).toBeLessThan(-12);
@@ -129,12 +123,12 @@ describe('viewport bounds', () => {
 
 describe('accessible text alternative', () => {
   it('names a confirmed cut without revealing the cell index', () => {
-    expect(describeCell('water', true)).toBe('Corte de agua en una zona cercana');
+    expect(describeCell('water', true)).toBe('Corte de agua confirmado');
     expect(describeCell('water', true)).not.toContain(limaCell);
   });
 
-  it('names a pending report as a single neighbour, not a confirmed cut', () => {
-    expect(describeCell('electricity', false)).toBe('Posible corte de luz reportado por un vecino');
+  it('names an unconfirmed report as possible, with no neighbour count', () => {
+    expect(describeCell('electricity', false)).toBe('Posible corte de luz, sin confirmar');
   });
 
   it('summarizes empty, confirmed, and pending lists', () => {
@@ -177,7 +171,7 @@ describe('proximity', () => {
 
   it('orders the nearest condition first once a position is known', () => {
     const far = latLngToCell(-12.15, -77.15, 9);
-    const sorted = sortByProximity([{ h3Cell: far, service: 'internet', provider: 'movistar', confirmed: true, reports: 3 }, { h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true, reports: 3 }], origin);
+    const sorted = sortByProximity([{ h3Cell: far, service: 'internet', provider: 'movistar', confirmed: true }, { h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true }], origin);
 
     expect(sorted[0]?.h3Cell).toBe(limaCell);
     expect(sorted[0]?.metres).toBeLessThan(sorted[1]?.metres ?? 0);
@@ -185,15 +179,15 @@ describe('proximity', () => {
 
   it('ranks a confirmed cut above a pending one when distances tie', () => {
     const sorted = sortByProximity([
-      { h3Cell: limaCell, service: 'internet', provider: 'movistar', confirmed: false, reports: 1 },
-      { h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true, reports: 3 },
+      { h3Cell: limaCell, service: 'internet', provider: 'movistar', confirmed: false },
+      { h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true },
     ], origin);
 
     expect(sorted[0]).toMatchObject({ service: 'water', confirmed: true });
   });
 
   it('stays stable by service when the visitor shared no position', () => {
-    const sorted = sortByProximity([{ h3Cell: limaCell, service: 'internet', provider: 'movistar', confirmed: true, reports: 3 }, { h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true, reports: 3 }]);
+    const sorted = sortByProximity([{ h3Cell: limaCell, service: 'internet', provider: 'movistar', confirmed: true }, { h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true }]);
 
     expect(sorted.map((cell) => cell.service)).toEqual(['water', 'internet']);
     expect(sorted[0]?.metres).toBeUndefined();
@@ -220,14 +214,29 @@ describe('district geometry', () => {
 
 describe('lead answer', () => {
   it('says plainly when nothing is reported', () => {
-    expect(leadAnswer([])).toBe('Ningún corte reportado ahora.');
+    expect(leadAnswer([])).toBe('Sin cortes reportados cerca.');
   });
 
   it('leads with the nearest service and its distance', () => {
-    expect(leadAnswer([{ h3Cell: limaCell, service: 'electricity', provider: 'luz_del_sur', confirmed: true, reports: 3, metres: 470 }])).toBe('Lo más cerca: Luz a 470 m');
+    expect(leadAnswer([{ h3Cell: limaCell, service: 'electricity', provider: 'luz_del_sur', confirmed: true, metres: 470 }])).toBe('Lo más cerca: Luz a 470 m');
   });
 
-  it('falls back to a count when the visitor shared no position', () => {
-    expect(leadAnswer([{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true, reports: 3 }])).toBe('1 reportes en la zona piloto.');
+  it('counts zones, singular, when the visitor shared no position', () => {
+    expect(leadAnswer([{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true }]))
+      .toBe('1 zona con cortes en el piloto. Activa tu ubicación para ver cuál te queda más cerca.');
+  });
+
+  it('counts contiguous cells as one zone and separate services as separate zones', () => {
+    const adjacentCell = gridDisk(limaCell, 1).find((cell) => cell !== limaCell);
+    expect(adjacentCell).toBeDefined();
+
+    expect(leadAnswer([
+      { h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true },
+      { h3Cell: adjacentCell!, service: 'water', provider: 'sedapal', confirmed: true },
+    ])).toMatch(/^1 zona con cortes/);
+    expect(leadAnswer([
+      { h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true },
+      { h3Cell: limaCell, service: 'internet', provider: 'movistar', confirmed: true },
+    ])).toMatch(/^2 zonas con cortes/);
   });
 });

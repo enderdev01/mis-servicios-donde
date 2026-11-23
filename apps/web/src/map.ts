@@ -13,8 +13,6 @@ export interface PublicCell {
   service: Service;
   provider: Provider;
   confirmed: boolean;
-  /** Distinct neighbours, top-coded to 3 so a quorum is "3+" without a precise count. */
-  reports: number;
 }
 
 export interface CellBlob {
@@ -26,7 +24,6 @@ export interface CellBlob {
   /** Privacy-safe visual area covering contiguous H3 cells, regardless of confirmation state. */
   radiusMetres: number;
   confirmed: boolean;
-  reports: number;
 }
 
 export interface ServiceStyle {
@@ -87,15 +84,14 @@ export function isPublicCell(value: unknown): value is PublicCell {
     supportedServices.has(cell.service) &&
     typeof cell.provider === 'string' &&
     isProviderForService(cell.service as Service, cell.provider) &&
-    typeof cell.confirmed === 'boolean' &&
-    typeof cell.reports === 'number'
+    typeof cell.confirmed === 'boolean'
   );
 }
 
 /** Projects to the public fields only, so nothing else the API sends is ever held. */
 export function toPublicCells(value: unknown): PublicCell[] {
   if (!Array.isArray(value)) return [];
-  return value.filter(isPublicCell).map((cell) => ({ h3Cell: cell.h3Cell, service: cell.service, provider: cell.provider, confirmed: cell.confirmed, reports: cell.reports }));
+  return value.filter(isPublicCell).map((cell) => ({ h3Cell: cell.h3Cell, service: cell.service, provider: cell.provider, confirmed: cell.confirmed }));
 }
 
 export function providerLabel(provider: Provider): string {
@@ -161,7 +157,6 @@ export function toCellBlobs(cells: PublicCell[]): CellBlob[] {
       centre,
       radiusMetres,
       confirmed: cluster.every((entry) => entry.cell.confirmed),
-      reports: cluster.reduce((total, entry) => total + entry.cell.reports, 0),
     });
   }
 
@@ -201,7 +196,7 @@ export function boundsOf(blobs: CellBlob[]): [[number, number], [number, number]
 
 export function describeCell(service: Service, confirmed: boolean): string {
   const kind = serviceStyles[service].label.toLowerCase();
-  return confirmed ? `Corte de ${kind} en una zona cercana` : `Posible corte de ${kind} reportado por un vecino`;
+  return confirmed ? `Corte de ${kind} confirmado` : `Posible corte de ${kind}, sin confirmar`;
 }
 
 export function summarizeCells(confirmed: number, pending: number): string {
@@ -297,8 +292,12 @@ function measure(h3Cell: string, origin: [number, number]): number | undefined {
 /** The one line worth reading before anything is expanded. */
 export function leadAnswer(cells: NearbyCell[]): string {
   const [first] = cells;
-  if (!first) return 'Ningún corte reportado ahora.';
+  if (!first) return 'Sin cortes reportados cerca.';
   const label = serviceStyles[first.service].label;
-  if (first.metres === undefined) return `${cells.length} reportes en la zona piloto.`;
+  if (first.metres === undefined) {
+    // One area, one count: contiguous cells draw as a single zone. An unmappable index still counts as one.
+    const zones = toCellBlobs(cells).length || cells.length;
+    return `${zones === 1 ? '1 zona' : `${zones} zonas`} con cortes en el piloto. Activa tu ubicación para ver cuál te queda más cerca.`;
+  }
   return `Lo más cerca: ${label} ${formatDistance(first.metres)}`;
 }

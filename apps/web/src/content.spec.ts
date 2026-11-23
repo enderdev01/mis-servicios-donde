@@ -32,9 +32,13 @@ describe('onboarding steps', () => {
     }
   });
 
-  it('frames the map as community generated and unofficial from the first step', () => {
+  it('frames the map as community generated from the first step, leaving the naming to the legal line', () => {
     const [first] = onboardingSteps;
-    expect(`${first?.title} ${first?.body}`.toLowerCase()).toContain('no oficial');
+    expect(`${first?.title} ${first?.body}`.toLowerCase()).toContain('vecinos');
+    expect(first?.body).toContain('no las empresas');
+    // The body no longer repeats the legal line that sits directly below it on every step.
+    expect(first?.body).not.toContain('Sedapal');
+    expect(`${siteNotice} ${unofficialNotice}`).toContain('no oficial');
   });
 
   it('explains that map proximity stays in the browser and a submitted coordinate is used once and discarded', () => {

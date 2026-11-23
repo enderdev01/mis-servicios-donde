@@ -241,3 +241,30 @@ test('moves the tab semantics with the layout across a resize', async ({ page })
     }));
   expect(leftovers).toEqual([{ role: null, tabindex: null }, { role: null, tabindex: null }]);
 });
+
+/*
+ * The sheet is anchored to the bottom. Sized by its content, the taller reports
+ * tab pushed the strip 149px up the screen right after the tap, so the thumb
+ * landed on whatever slid under it. The strip must stay put on both tabs.
+ */
+test('keeps the mobile tab strip in place when switching tabs', async ({ page }) => {
+  await asReturningVisitor(page);
+  await page.route('**/v1/cells', (route) => route.fulfill({
+    json: [
+      { h3Cell: '898e62c0cdbffff', service: 'water', provider: 'sedapal', confirmed: true },
+      { h3Cell: '898e62c01afffff', service: 'internet', provider: 'movistar', confirmed: false },
+    ],
+  }));
+  await page.setViewportSize(MOBILE);
+  await page.goto('/');
+  await openSheet(page);
+
+  const stripTop = () => page.evaluate(() =>
+    document.querySelector('.rail-tabs')?.getBoundingClientRect().top ?? Number.NaN);
+  const onReport = await stripTop();
+  await page.getByRole('tab', { name: 'Reportes' }).click();
+  await expect(page.getByRole('heading', { name: 'Cortes cerca tuyo' })).toBeVisible();
+  expect(Math.abs((await stripTop()) - onReport), 'strip moved after switching to Reportes').toBeLessThanOrEqual(2);
+  await page.getByRole('tab', { name: 'Reportar' }).click();
+  expect(Math.abs((await stripTop()) - onReport), 'strip moved after switching back').toBeLessThanOrEqual(2);
+});
