@@ -15,6 +15,7 @@
     "check": "npm run lint && npm run typecheck && npm run test:unit",
     "lint": "eslint .",
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test:unit --workspaces --if-present -- --passWithNoTests",
     "test:unit": "npm run test:unit --workspaces --if-present",
     "test:integration": "npm run test:integration --workspace @mis-servicios/api",
     "test:e2e": "playwright test"
