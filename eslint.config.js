@@ -3,7 +3,7 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['**/dist/**', '**/.astro/**', '**/node_modules/**', '**/*.astro', 'playwright-report/**', 'test-results/**', '**/.wrangler/**', '**/worker-configuration.d.ts'] },
+  { ignores: ['**/dist/**', '**/.astro/**', '**/node_modules/**', '**/*.astro', 'playwright-report/**', 'test-results/**', '**/.wrangler/**', '**/worker-configuration.d.ts', 'scripts/**', 'videos/**'] },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {

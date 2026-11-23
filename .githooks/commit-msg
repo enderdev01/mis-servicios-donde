@@ -1,0 +1,17 @@
+#!/bin/sh
+# Use the guard of the skuizops plugin installed for this user (installed_plugins.json, user scope), only when it
+# lives in the plugin cache, ships this guard script and is not orphaned: a branch cannot change it, and plugin
+# updates reach it. Otherwise, e.g. contributors without the plugin, use the copy in scripts/guard/ (fails if missing).
+guard=$(node -e '
+const { existsSync, readFileSync } = require("fs"), { join, resolve } = require("path");
+try {
+  const cache = join(process.env.HOME, ".claude", "plugins", "cache") + "/";
+  const e = JSON.parse(readFileSync(join(process.env.HOME, ".claude", "plugins", "installed_plugins.json"), "utf8"))
+    .plugins["skuizops@juicebar"].find((x) => x.scope === "user");
+  const p = resolve(e.installPath);
+  if (p.startsWith(cache) && existsSync(join(p, "scripts", process.argv[1])) && !existsSync(join(p, ".orphaned_at")))
+    console.log(join(p, "scripts"));
+} catch {}
+' attribution-guard.mjs 2>/dev/null)
+[ -n "$guard" ] || guard="$(git rev-parse --show-toplevel)/scripts/guard"
+exec node "$guard/attribution-guard.mjs" "$1"
