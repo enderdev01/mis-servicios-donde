@@ -34,7 +34,7 @@ test('submits a report and renders only the public aggregate after confirmation'
 
   await page.getByLabel('Ver servicio').selectOption('water');
   await expect(page.getByRole('status')).toContainText('1 confirmado.');
-  await expect(page.getByLabel('Cortes confirmados por zona')).toContainText('Corte de agua en una zona cercana');
+  await expect(page.getByLabel('Cortes confirmados por zona')).toContainText('Corte de agua confirmado');
   await revealNotice(page);
   await expect(page.getByRole('note')).toContainText('No es un canal oficial de Sedapal, Luz del Sur ni de ningún proveedor.');
   await expect(page.locator('body')).not.toContainText('8999999999fffff');
@@ -53,6 +53,6 @@ test('keeps the browser private and actionable when rollout APIs are disabled', 
   await page.getByRole('button', { name: 'Enviar reporte' }).click();
 
   await expect(page.getByRole('alert')).toContainText('No pudimos enviar tu reporte ahora.');
-  await expect(page.getByRole('status')).toContainText('No hay cortes reportados en este momento.');
+  await expect(page.getByRole('status')).toContainText('Nadie ha reportado cortes en la zona piloto.');
   await expect(page.getByLabel('Cortes confirmados por zona')).toBeEmpty();
 });
