@@ -5,12 +5,12 @@
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
-  // The database_id is a placeholder until `wrangler d1 create mis-servicios` is run in the production cutover.
+  // Production D1 database, created with `wrangler d1 create mis-servicios` (region ENAM).
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "mis-servicios",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "3cab0b64-c967-4ccc-9817-f78b45bfd955",
       "migrations_dir": "migrations"
     }
   ],
