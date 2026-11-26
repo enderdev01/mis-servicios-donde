@@ -16,6 +16,7 @@ export default defineConfig({
               bindings: {
                 TEST_MIGRATIONS: await readD1Migrations('./migrations'),
                 INTAKE_ENABLED: 'true',
+                RETENTION_WORKER_ENABLED: 'true',
                 DEVICE_TOKEN_SECRET: 'test-device-secret',
               },
             },

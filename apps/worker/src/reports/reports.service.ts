@@ -18,7 +18,8 @@ export class ReportsService {
   constructor(private readonly db: D1Database, private readonly runIntake: RunIntake) {}
 
   async accept(value: unknown): Promise<{ submissionId: string; accepted: true }> {
-    if (process.env.INTAKE_ENABLED !== 'true') throw unavailable();
+    // Retention must run before data is collected: the spec purges names in 24 h and events in 48 h.
+    if (process.env.INTAKE_ENABLED !== 'true' || process.env.RETENTION_WORKER_ENABLED !== 'true') throw unavailable();
     const input = validateReportInput(value);
     const resolution = this.h3Resolution;
     const secret = this.deviceSecret;

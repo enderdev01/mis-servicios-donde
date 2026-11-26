@@ -37,7 +37,7 @@ A single report shows as **unconfirmed**, so the person who sent it sees it land
 ## Capabilities and Constraints
 
 - Astro static frontend, NestJS API, PostgreSQL. Leaflet + h3-js render the hexagons; the raw H3 index is never shown as text.
-- **`GET /v1/cells` returns only `{h3Cell, service}`.** No timestamps, no counts, no device data, no coordinates. This is a specified and verified privacy decision, not an oversight — so the public surface cannot order or label anything by recency.
+- **`GET /v1/cells` returns only `{h3Cell, service, provider, confirmed}`.** No timestamps, no counts, no device data, no coordinates. This is a specified and verified privacy decision, not an oversight — so the public surface cannot order or label anything by recency.
 - Proximity is therefore computed **entirely in the browser**: `cellToLatLng` gives a cell centre, the visitor's own position never leaves the device and is never sent to the API.
 - The visitor's location is requested on page load. **Denial is a first-class state, not an error** — the map must remain fully useful centred on the pilot zone.
 - Three services: water, electricity, internet. Wire values stay `water` / `electricity` / `internet`; visible labels are Spanish (Agua / Luz / Internet).

@@ -25,6 +25,7 @@ describe('report intake configuration gates', () => {
 
   beforeEach(() => {
     process.env.INTAKE_ENABLED = 'true';
+    process.env.RETENTION_WORKER_ENABLED = 'true';
     process.env.H3_RESOLUTION = '9';
     process.env.DEVICE_TOKEN_SECRET = 'a-real-secret';
   });
@@ -54,6 +55,18 @@ describe('report intake configuration gates', () => {
 
     await expect(service.accept(report)).rejects.toThrow(ReportRequestError);
     expect(query).not.toHaveBeenCalled();
+  });
+
+  it('#72 refuses intake while retention is off, and accepts it once both gates are on', async () => {
+    process.env.RETENTION_WORKER_ENABLED = 'false';
+    const off = buildService();
+    await expect(off.service.accept(report)).rejects.toThrow(ReportRequestError);
+    expect(off.query).not.toHaveBeenCalled();
+
+    process.env.RETENTION_WORKER_ENABLED = 'true';
+    const on = buildService();
+    await expect(on.service.accept(report)).rejects.toThrow(ReportRequestError);
+    expect(on.query).toHaveBeenCalled();
   });
 
   it('refuses intake while the gate is closed without reading configuration', async () => {

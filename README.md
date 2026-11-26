@@ -52,7 +52,7 @@ packages/contracts/ shared types and validation schemas
 
    ```sh
    npm run db:migrate:local -w @mis-servicios/worker
-   npm run dev -w @mis-servicios/worker -- --var INTAKE_ENABLED:true --var PUBLIC_MAP_ENABLED:true --var DEVICE_TOKEN_SECRET:local-only
+   npm run dev -w @mis-servicios/worker -- --var INTAKE_ENABLED:true --var RETENTION_WORKER_ENABLED:true --var PUBLIC_MAP_ENABLED:true --var DEVICE_TOKEN_SECRET:local-only
    ```
 
    The Worker listens on `http://127.0.0.1:8787`. See [apps/worker/README.md](apps/worker/README.md).
@@ -79,7 +79,7 @@ Do not commit `.env` or secret values. Locally, pass values with `--var` or a `.
 
 | Variable | Required when | Purpose |
 |---|---|---|
-| `INTAKE_ENABLED` | accepting reports | Must be exactly `true` before `POST /v1/reports` accepts data. |
+| `INTAKE_ENABLED` | accepting reports | Must be exactly `true`, together with `RETENTION_WORKER_ENABLED`, before `POST /v1/reports` accepts data. |
 | `PUBLIC_MAP_ENABLED` | publishing map cells | Must be exactly `true`; publication also requires a valid H3 resolution and two or more approved database zones. |
 | `ALERT_DISPATCH_ENABLED` | delivering alerts | Must be exactly `true` to attempt Telegram delivery. Disabling it cancels pending and retryable intents. |
 | `RETENTION_WORKER_ENABLED` | scheduled retention | Must be exactly `true` to run cleanup at the next midnight in Lima and then daily. |
@@ -106,7 +106,7 @@ The API also rejects oversized JSON bodies, applies security headers, and return
 
 | Surface | Enable condition | Disable / rollback effect |
 |---|---|---|
-| Intake | `INTAKE_ENABLED=true` | New reports receive the generic unavailable response and are not persisted. |
+| Intake | `INTAKE_ENABLED=true` and `RETENTION_WORKER_ENABLED=true` | New reports receive the generic unavailable response and are not persisted. |
 | Public map | `PUBLIC_MAP_ENABLED=true`, valid H3 resolution, 2–3 approved zones | `GET /v1/cells` returns an empty list. |
 | Telegram dispatch | `ALERT_DISPATCH_ENABLED=true` plus both Telegram secrets | Pending and retryable intents are cancelled; accepted reports remain independent of provider delivery. |
 | Retention | `RETENTION_WORKER_ENABLED=true` | Cleanup runs at the next midnight in Lima, then daily; keep it enabled after data collection begins. |

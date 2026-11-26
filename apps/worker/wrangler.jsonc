@@ -33,7 +33,8 @@
   // Only re-arms the scheduler alarm if it is missing; it never queries the database.
   "triggers": { "crons": ["0 * * * *"] },
   "vars": {
-    // Enable in order: map, dispatch (needs the Telegram secrets), intake, then retention once data collection starts.
+    // Enable in order: map, dispatch (needs the Telegram secrets), retention, then intake. Intake is refused unless
+    // retention is also on, because names must be purged in 24 h and events in 48 h.
     // The map is on: it only publishes aggregated cells. Intake stays off until alerts can be delivered, because
     // dispatch being off cancels every alert an episode creates and that cannot be recovered.
     "INTAKE_ENABLED": "false",

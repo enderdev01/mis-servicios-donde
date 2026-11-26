@@ -15,7 +15,7 @@ The API for mis-servicios, and the only backend in this repo. A Hono app on Clou
 
 ```sh
 npm run db:migrate:local -w @mis-servicios/worker
-npm run dev -w @mis-servicios/worker -- --var INTAKE_ENABLED:true --var PUBLIC_MAP_ENABLED:true --var DEVICE_TOKEN_SECRET:local-only
+npm run dev -w @mis-servicios/worker -- --var INTAKE_ENABLED:true --var RETENTION_WORKER_ENABLED:true --var PUBLIC_MAP_ENABLED:true --var DEVICE_TOKEN_SECRET:local-only
 ```
 
 `wrangler dev` serves the Worker on `http://127.0.0.1:8787` with a local D1 database. Checks, in this workspace:
@@ -41,8 +41,8 @@ npm run dev -w @mis-servicios/worker -- --var INTAKE_ENABLED:true --var PUBLIC_M
 5. **Verify** with those gates off: `GET /health` is 200, `GET /v1/zones` lists the zones, `GET /v1/cells` is `[]`.
 6. **Point the web at it.** Change the `destination` of both rewrites in `apps/web/vercel.json` to the Worker URL.
 7. **Enable the gates in order**, editing `vars` in `wrangler.jsonc` and redeploying: `PUBLIC_MAP_ENABLED`, then
-   `INTAKE_ENABLED`, then `ALERT_DISPATCH_ENABLED` (see "Gates and workers" in the root README), then
-   `RETENTION_WORKER_ENABLED` once data collection starts.
+   `ALERT_DISPATCH_ENABLED` (see "Gates and workers" in the root README), then `RETENTION_WORKER_ENABLED`, then
+   `INTAKE_ENABLED`. Intake is refused while retention is off.
 
 ## Notes
 
