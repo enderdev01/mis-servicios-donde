@@ -1,103 +1,91 @@
 import { type Provider, type Service } from '@mis-servicios/contracts';
-import pg from 'pg';
 
 import { AlertsService } from '../alerts/alerts.service.js';
+import { nowSql, offsetSql, selectRows } from '../database/d1.js';
 import { configuredIntervalMs } from '../workers/interval-worker.js';
-import { episodeLifetimeHours, isQuorumThresholdCrossing, orderedLockKeys, quorumWindowMinutes, shouldRestoreEpisode } from './consensus-policy.js';
-import { DatabasePool } from '../database/database.pool.js';
+import { episodeLifetimeHours, isQuorumThresholdCrossing, quorumWindowMinutes, shouldRestoreEpisode } from './consensus-policy.js';
 
 type Status = 'outage' | 'restored';
 interface Vote { service: Service; provider: Provider; eventId: string }
-interface Episode { id: string; openedAt: Date; active: boolean }
-interface Closure { closedAt: Date }
+interface Episode { id: string; openedAt: string }
 
+const expireStale = `UPDATE "OutageEpisode" SET "active" = 0, "closedAt" = "expiresAt", "closureReason" = 'expired' WHERE "active" = 1 AND "expiresAt" <= ${nowSql}`;
+
+/**
+ * `evaluate` is a read-decide-write and D1 has no row locks, so callers must run it one at a time
+ * per H3 cell (the `CellCoordinator` Durable Object). The partial unique index on active episodes
+ * is the backstop: a second concurrent open fails instead of duplicating the episode.
+ */
 export class ConsensusService {
+  constructor(private readonly alerts: AlertsService, private readonly db: D1Database) {}
 
-  constructor(private readonly alerts: AlertsService, private readonly database: DatabasePool) {}
-
-  async evaluate(client: pg.PoolClient, zoneId: string, zoneName: string, h3Cell: string, status: Status, votes: Vote[]): Promise<void> {
-    for (const key of orderedLockKeys(votes.map((vote) => [h3Cell, `${vote.service}:${vote.provider}`]))) {
-      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [key]);
-    }
-    for (const vote of votes) await this.evaluateVote(client, zoneId, zoneName, h3Cell, status, vote);
+  async evaluate(zoneId: string, zoneName: string, h3Cell: string, status: Status, votes: Vote[]): Promise<void> {
+    for (const vote of votes) await this.evaluateVote(zoneId, zoneName, h3Cell, status, vote);
   }
 
   async listPublicEpisodes(): Promise<{ h3Cell: string; service: Service; provider: Provider }[]> {
-    const result = await this.database.query<{ h3Cell: string; service: Service; provider: Provider }>(
-      'SELECT "h3Cell", "service", "provider" FROM "OutageEpisode" WHERE "active" = true AND "expiresAt" > CURRENT_TIMESTAMP',
-    );
-    return result.rows;
+    return selectRows(this.db, `SELECT "h3Cell", "service", "provider" FROM "OutageEpisode" WHERE "active" = 1 AND "expiresAt" > ${nowSql}`);
   }
 
   async expireStaleEpisodes(): Promise<void> {
-    const candidates = await this.database.query<{ h3Cell: string; service: Service; provider: Provider }>(
-      'SELECT "h3Cell", "service", "provider" FROM "OutageEpisode" WHERE "active" = true AND "expiresAt" <= CURRENT_TIMESTAMP',
-    );
-    const client = await this.database.connect();
-    try {
-      await client.query('BEGIN');
-      for (const key of orderedLockKeys(candidates.rows.map((episode) => [episode.h3Cell, `${episode.service}:${episode.provider}`]))) {
-        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [key]);
-      }
-      await client.query('UPDATE "OutageEpisode" SET "active" = false, "closedAt" = "expiresAt", "closureReason" = \'expired\'::"EpisodeClosureReason" WHERE "active" = true AND "expiresAt" <= CURRENT_TIMESTAMP');
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally { client.release(); }
+    await this.db.prepare(expireStale).run();
   }
 
-  private async evaluateVote(client: pg.PoolClient, zoneId: string, zoneName: string, h3Cell: string, status: Status, vote: Vote): Promise<void> {
-    await client.query('UPDATE "OutageEpisode" SET "active" = false, "closedAt" = "expiresAt", "closureReason" = \'expired\'::"EpisodeClosureReason" WHERE "h3Cell" = $1 AND "service" = $2::"Service" AND "provider" = $3::"Provider" AND "active" = true AND "expiresAt" <= CURRENT_TIMESTAMP', [h3Cell, vote.service, vote.provider]);
-    const active = await client.query<Episode>(
-      'SELECT "id", "openedAt", "active" FROM "OutageEpisode" WHERE "h3Cell" = $1 AND "service" = $2::"Service" AND "provider" = $3::"Provider" AND "active" = true FOR UPDATE',
-      [h3Cell, vote.service, vote.provider],
-    );
-    const episode = active.rows[0];
-    const closure = !episode && status === 'outage' ? await client.query<Closure>(
-      'SELECT "closedAt" FROM "OutageEpisode" WHERE "h3Cell" = $1 AND "service" = $2::"Service" AND "provider" = $3::"Provider" AND "closedAt" IS NOT NULL ORDER BY "closedAt" DESC LIMIT 1',
-      [h3Cell, vote.service, vote.provider],
-    ) : undefined;
-    const voteWindowStart = status === 'restored' ? episode?.openedAt : closure?.rows[0]?.closedAt;
-    const afterOpening = voteWindowStart ? ' AND "createdAt" > $6' : '';
-    const parameters = voteWindowStart ? [h3Cell, vote.service, vote.provider, status, vote.eventId, voteWindowStart] : [h3Cell, vote.service, vote.provider, status, vote.eventId];
-    const votes = await client.query<{ previous: string; current: string; activeOutageSignals: string; restoredVotesAfterOpening: string }>(
+  private async evaluateVote(zoneId: string, zoneName: string, h3Cell: string, status: Status, vote: Vote): Promise<void> {
+    const key = [h3Cell, vote.service, vote.provider];
+    await this.db.prepare(`${expireStale} AND "h3Cell" = ? AND "service" = ? AND "provider" = ?`).bind(...key).run();
+    const [episode] = await selectRows<Episode>(this.db, 'SELECT "id", "openedAt" FROM "OutageEpisode" WHERE "h3Cell" = ? AND "service" = ? AND "provider" = ? AND "active" = 1', key);
+    const [closure] = !episode && status === 'outage'
+      ? await selectRows<{ closedAt: string }>(this.db, 'SELECT "closedAt" FROM "OutageEpisode" WHERE "h3Cell" = ? AND "service" = ? AND "provider" = ? AND "closedAt" IS NOT NULL ORDER BY "closedAt" DESC LIMIT 1', key)
+      : [];
+    const voteWindowStart = status === 'restored' ? episode?.openedAt : closure?.closedAt;
+    const [counts] = await selectRows<{ previous: number; current: number; activeOutageSignals: number; restoredVotesAfterOpening: number }>(
+      this.db,
       `WITH latest AS (
-        SELECT DISTINCT ON ("deviceToken") "id", "deviceToken", "status", "createdAt"
-        FROM "ReportEvent"
-        WHERE "h3Cell" = $1 AND "service" = $2::"Service" AND "provider" = $3::"Provider" AND "expiresAt" > CURRENT_TIMESTAMP
-        ORDER BY "deviceToken", "createdAt" DESC, "id" DESC
+        SELECT "id", "status", "createdAt" FROM (
+          SELECT "id", "status", "createdAt", ROW_NUMBER() OVER (PARTITION BY "deviceToken" ORDER BY "createdAt" DESC, "id" DESC) AS "rank"
+          FROM "ReportEvent"
+          WHERE "h3Cell" = ? AND "service" = ? AND "provider" = ? AND "expiresAt" > ${nowSql}
+        ) WHERE "rank" = 1
       ), quorum AS (
-        SELECT * FROM latest WHERE "createdAt" > CURRENT_TIMESTAMP - INTERVAL '${quorumWindowMinutes} minutes'${afterOpening}
+        SELECT * FROM latest WHERE "createdAt" > ${offsetSql(`-${quorumWindowMinutes} minutes`)}${voteWindowStart ? ' AND "createdAt" > ?' : ''}
       )
-      SELECT count(*) FILTER (WHERE "status" = $4::"ReportStatus" AND "id" <> $5) AS previous,
-        count(*) FILTER (WHERE "status" = $4::"ReportStatus") AS current,
-        (SELECT count(*) FROM latest WHERE "status" = 'outage'::"ReportStatus") AS "activeOutageSignals",
-        count(*) FILTER (WHERE "status" = 'restored'::"ReportStatus") AS "restoredVotesAfterOpening"
+      SELECT count(*) FILTER (WHERE "status" = ? AND "id" <> ?) AS "previous",
+        count(*) FILTER (WHERE "status" = ?) AS "current",
+        (SELECT count(*) FROM latest WHERE "status" = 'outage') AS "activeOutageSignals",
+        count(*) FILTER (WHERE "status" = 'restored') AS "restoredVotesAfterOpening"
       FROM quorum`,
-      parameters,
+      [...key, ...(voteWindowStart ? [voteWindowStart] : []), status, vote.eventId, status],
     );
-    const counts = votes.rows[0];
     if (!counts || !isQuorumThresholdCrossing(Number(counts.previous), Number(counts.current))) return;
     if (status === 'restored') {
       if (episode && shouldRestoreEpisode({
-        active: episode.active,
+        active: true,
         restoredVotesAfterOpening: Number(counts.restoredVotesAfterOpening),
         activeOutageSignals: Number(counts.activeOutageSignals),
       })) {
-        await client.query('UPDATE "OutageEpisode" SET "active" = false, "closedAt" = CURRENT_TIMESTAMP, "closureReason" = \'restored\'::"EpisodeClosureReason" WHERE "id" = $1', [episode.id]);
-        await this.alerts.cancelPendingForEpisode(client, episode.id);
+        // One batch: the episode never closes without its pending alert being cancelled.
+        await this.db.batch([
+          this.db.prepare(`UPDATE "OutageEpisode" SET "active" = 0, "closedAt" = ${nowSql}, "closureReason" = 'restored' WHERE "id" = ? AND "active" = 1`).bind(episode.id),
+          this.alerts.cancelPendingStatement(episode.id),
+        ]);
       }
       return;
     }
     if (episode) {
-    await client.query(`UPDATE "OutageEpisode" SET "expiresAt" = CURRENT_TIMESTAMP + INTERVAL '${episodeLifetimeHours} hours', "lastQuorumAt" = CURRENT_TIMESTAMP WHERE "id" = $1`, [episode.id]);
+      await this.db.prepare(`UPDATE "OutageEpisode" SET "expiresAt" = ${offsetSql(`+${episodeLifetimeHours} hours`)}, "lastQuorumAt" = ${nowSql} WHERE "id" = ?`).bind(episode.id).run();
       return;
     }
-    const created = await client.query<{ id: string }>(`INSERT INTO "OutageEpisode" ("zoneId", "h3Cell", "service", "provider", "expiresAt", "openedAt", "lastQuorumAt") VALUES ($1::uuid, $2, $3::"Service", $4::"Provider", CURRENT_TIMESTAMP + INTERVAL '${episodeLifetimeHours} hours', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING "id"`, [zoneId, h3Cell, vote.service, vote.provider]);
-    if (created.rows[0]?.id) await this.alerts.queueOpening(client, created.rows[0].id, zoneName, vote.service);
+    const episodeId = crypto.randomUUID();
+    // ON CONFLICT DO NOTHING: if an active episode already exists the unique index skips the open, and the
+    // intent statement (which needs the new episode row) skips with it.
+    await this.db.batch([
+      this.db.prepare(
+        `INSERT INTO "OutageEpisode" ("id", "zoneId", "h3Cell", "service", "provider", "expiresAt") VALUES (?, ?, ?, ?, ?, ${offsetSql(`+${episodeLifetimeHours} hours`)}) ON CONFLICT DO NOTHING`,
+      ).bind(episodeId, zoneId, h3Cell, vote.service, vote.provider),
+      this.alerts.openingStatement(episodeId, zoneName, vote.service),
+    ]);
   }
 }
 
 export const episodeExpiryIntervalMs = configuredIntervalMs('EPISODE_EXPIRY_INTERVAL_SECONDS', 300);
-

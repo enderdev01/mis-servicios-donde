@@ -1,7 +1,5 @@
-import pg from 'pg';
-
+import { nowSql, offsetSql, selectRows } from '../database/d1.js';
 import { clampCycleDelayMs, configuredIntervalMs } from '../workers/interval-worker.js';
-import { DatabasePool } from '../database/database.pool.js';
 
 type Service = 'water' | 'electricity' | 'internet';
 interface ClaimedIntent { id: string; content: string; attempts: number; leaseToken: string }
@@ -30,28 +28,28 @@ export function retryDelaySeconds(attempts: number): number {
  * diverged, a permanently-matching row would pin the worker to the dispatch
  * interval instead of letting it idle.
  */
-const claimableNowPredicate = `"status" IN ('pending', 'retryable') AND "nextAttemptAt" <= CURRENT_TIMESTAMP AND ("leaseExpiresAt" IS NULL OR "leaseExpiresAt" < CURRENT_TIMESTAMP)`;
+const claimableNowPredicate = `"status" IN ('pending', 'retryable') AND "nextAttemptAt" <= ${nowSql} AND ("leaseExpiresAt" IS NULL OR "leaseExpiresAt" < ${nowSql})`;
 
 export class AlertsService {
-  constructor(private readonly database: DatabasePool) {}
+  constructor(private readonly db: D1Database) {}
 
-  async queueOpening(client: pg.PoolClient, episodeId: string, zoneName: string, service: Service): Promise<void> {
-    await client.query(
-      `INSERT INTO "AlertIntent" ("episodeId", "kind", "content") VALUES ($1::uuid, 'OPENED', $2) ON CONFLICT ("episodeId", "kind") DO NOTHING`,
-      [episodeId, openingAlertContent({ zoneName, service })],
-    );
+  /** Inserts the opening intent only if the episode row exists, so it can ride in the batch that opens the episode. */
+  openingStatement(episodeId: string, zoneName: string, service: Service): D1PreparedStatement {
+    return this.db.prepare(
+      `INSERT INTO "AlertIntent" ("id", "episodeId", "kind", "content") SELECT ?, ?, 'OPENED', ? WHERE EXISTS (SELECT 1 FROM "OutageEpisode" WHERE "id" = ?) ON CONFLICT ("episodeId", "kind") DO NOTHING`,
+    ).bind(crypto.randomUUID(), episodeId, openingAlertContent({ zoneName, service }), episodeId);
   }
 
-  async cancelPendingForEpisode(client: pg.PoolClient, episodeId: string): Promise<void> {
-    await client.query(
-      `UPDATE "AlertIntent" SET "status" = 'cancelled', "cancelledAt" = CURRENT_TIMESTAMP, "leaseToken" = NULL, "leaseExpiresAt" = NULL WHERE "episodeId" = $1::uuid AND "status" IN ('pending', 'retryable')`,
-      [episodeId],
-    );
+  /** Clearing the lease is what makes an in-flight claim unable to mark a cancelled intent delivered. */
+  cancelPendingStatement(episodeId: string): D1PreparedStatement {
+    return this.db.prepare(
+      `UPDATE "AlertIntent" SET "status" = 'cancelled', "cancelledAt" = ${nowSql}, "leaseToken" = NULL, "leaseExpiresAt" = NULL WHERE "episodeId" = ? AND "status" IN ('pending', 'retryable')`,
+    ).bind(episodeId);
   }
 
   async dispatchPending(): Promise<DispatchCycleSummary> {
     if (process.env.ALERT_DISPATCH_ENABLED !== 'true') {
-      await this.database.query(`UPDATE "AlertIntent" SET "status" = 'cancelled', "cancelledAt" = CURRENT_TIMESTAMP WHERE "status" IN ('pending', 'retryable')`);
+      await this.db.prepare(`UPDATE "AlertIntent" SET "status" = 'cancelled', "cancelledAt" = ${nowSql} WHERE "status" IN ('pending', 'retryable')`).run();
       return { claimedWork: false, nextDueInSeconds: null };
     }
     const intents = await this.claimPending();
@@ -63,43 +61,48 @@ export class AlertsService {
   /**
    * Earliest moment the outbox becomes claimable again: either a retry backoff
    * elapses, an abandoned lease expires after a crashed cycle, or a row is
-   * claimable now but was skipped by `FOR UPDATE SKIP LOCKED` because another
-   * session held its lock.
+   * claimable now but was not claimed (the claim takes at most 10 rows).
    */
   private async nextDueInSeconds(): Promise<number | null> {
-    const result = await this.database.query<{ seconds: string | null }>(
-      `SELECT MIN("seconds") AS "seconds" FROM (
-        SELECT CEIL(EXTRACT(EPOCH FROM ("nextAttemptAt" - CURRENT_TIMESTAMP))) AS "seconds"
-          FROM "AlertIntent" WHERE "status" IN ('pending', 'retryable') AND "nextAttemptAt" > CURRENT_TIMESTAMP
+    const milliseconds = (column: string): string => `CAST(ROUND((julianday("${column}") - julianday('now')) * 86400000) AS INTEGER)`;
+    const [row] = await selectRows<{ millis: number | null }>(
+      this.db,
+      `SELECT MIN("millis") AS "millis" FROM (
+        SELECT ${milliseconds('nextAttemptAt')} AS "millis"
+          FROM "AlertIntent" WHERE "status" IN ('pending', 'retryable') AND "nextAttemptAt" > ${nowSql}
         UNION ALL
-        SELECT CEIL(EXTRACT(EPOCH FROM ("leaseExpiresAt" - CURRENT_TIMESTAMP))) AS "seconds"
-          FROM "AlertIntent" WHERE "status" IN ('pending', 'retryable') AND "leaseExpiresAt" >= CURRENT_TIMESTAMP
+        SELECT ${milliseconds('leaseExpiresAt')} AS "millis"
+          FROM "AlertIntent" WHERE "status" IN ('pending', 'retryable') AND "leaseExpiresAt" >= ${nowSql}
         UNION ALL
-        SELECT 0 AS "seconds" FROM "AlertIntent" WHERE ${claimableNowPredicate}
+        SELECT 0 AS "millis" FROM "AlertIntent" WHERE ${claimableNowPredicate}
       ) due`,
     );
-    const seconds = result.rows[0]?.seconds;
-    return seconds == null ? null : Math.max(Number(seconds), 1);
+    const millis = row?.millis;
+    return millis == null ? null : Math.max(Math.ceil(Number(millis) / 1000), 1);
   }
 
+  /** One atomic statement: the predicate is re-checked on the rows the subquery picked, so two claimers never share a row. */
   private async claimPending(): Promise<ClaimedIntent[]> {
     const leaseToken = crypto.randomUUID();
-    const result = await this.database.query<ClaimedIntent>(
-      `WITH candidates AS (
-        SELECT "id" FROM "AlertIntent" WHERE ${claimableNowPredicate} ORDER BY "createdAt" FOR UPDATE SKIP LOCKED LIMIT 10
-      ) UPDATE "AlertIntent" intent SET "leaseToken" = $1, "leaseExpiresAt" = CURRENT_TIMESTAMP + INTERVAL '5 minutes'
-      FROM candidates WHERE intent."id" = candidates."id" RETURNING intent."id", intent."content", intent."attempts", intent."leaseToken"`, [leaseToken],
+    const rows = await selectRows<Omit<ClaimedIntent, 'leaseToken'> & { leaseToken: string | null }>(
+      this.db,
+      `UPDATE "AlertIntent" SET "leaseToken" = ?, "leaseExpiresAt" = ${offsetSql('+5 minutes')}
+      WHERE "id" IN (SELECT "id" FROM "AlertIntent" WHERE ${claimableNowPredicate} ORDER BY "createdAt" LIMIT 10) AND ${claimableNowPredicate}
+      RETURNING "id", "content", "attempts", "leaseToken"`,
+      [leaseToken],
     );
-    return result.rows.filter((intent): intent is ClaimedIntent => intent.leaseToken !== null);
+    return rows.filter((intent): intent is ClaimedIntent => intent.leaseToken !== null);
   }
 
   private async deliver(intent: ClaimedIntent): Promise<void> {
+    // The status and lease guards make a cancel that landed after the claim win: it clears the lease.
+    const owned = `"id" = ? AND "leaseToken" = ? AND "status" IN ('pending', 'retryable')`;
     try {
       await this.sendTelegram(intent.content);
-      await this.database.query(`UPDATE "AlertIntent" SET "status" = 'delivered', "deliveredAt" = CURRENT_TIMESTAMP, "leaseToken" = NULL, "leaseExpiresAt" = NULL WHERE "id" = $1::uuid AND "leaseToken" = $2`, [intent.id, intent.leaseToken]);
+      await this.db.prepare(`UPDATE "AlertIntent" SET "status" = 'delivered', "deliveredAt" = ${nowSql}, "leaseToken" = NULL, "leaseExpiresAt" = NULL WHERE ${owned}`).bind(intent.id, intent.leaseToken).run();
     } catch {
       const attempts = intent.attempts + 1;
-      await this.database.query(`UPDATE "AlertIntent" SET "status" = 'retryable', "attempts" = $3, "nextAttemptAt" = CURRENT_TIMESTAMP + ($4 * INTERVAL '1 second'), "leaseToken" = NULL, "leaseExpiresAt" = NULL WHERE "id" = $1::uuid AND "leaseToken" = $2`, [intent.id, intent.leaseToken, attempts, retryDelaySeconds(attempts)]);
+      await this.db.prepare(`UPDATE "AlertIntent" SET "status" = 'retryable', "attempts" = ?, "nextAttemptAt" = ${offsetSql(`+${retryDelaySeconds(attempts)} seconds`)}, "leaseToken" = NULL, "leaseExpiresAt" = NULL WHERE ${owned}`).bind(attempts, intent.id, intent.leaseToken).run();
     }
   }
 
@@ -144,4 +147,3 @@ export function idleIntervalNormalizationWarning(idleMaxMs: number, intervalMs: 
   if (idleMaxMs >= intervalMs) return null;
   return `ALERT_DISPATCH_IDLE_INTERVAL_SECONDS (${idleMaxMs / 1000}s) is below ALERT_DISPATCH_INTERVAL_SECONDS (${intervalMs / 1000}s); the configured value is left as is, so the effective idle ceiling is the dispatch interval for every cycle, which wins unconditionally as the polling cadence.`;
 }
-

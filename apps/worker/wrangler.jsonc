@@ -5,24 +5,26 @@
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
-  // Hyperdrive pools connections to the existing Postgres. Create it with
-  // `wrangler hyperdrive create mis-servicios-db --connection-string=<DATABASE_URL>` and paste the id below.
-  // `localConnectionString` points `wrangler dev` at the repo's Docker Postgres.
-  "hyperdrive": [
+  // Production D1 database, created with `wrangler d1 create mis-servicios` (region ENAM).
+  "d1_databases": [
     {
-      "binding": "HYPERDRIVE",
-      "id": "3403ac486e5943ad9d548019ecdcc873",
-      "localConnectionString": "postgresql://mis_servicios:mis_servicios@127.0.0.1:54329/mis_servicios"
+      "binding": "DB",
+      "database_name": "mis-servicios",
+      "database_id": "3cab0b64-c967-4ccc-9817-f78b45bfd955",
+      "migrations_dir": "migrations"
     }
   ],
   "durable_objects": {
     "bindings": [
       { "name": "SCHEDULER", "class_name": "Scheduler" },
-      { "name": "REPORT_LIMITER", "class_name": "ReportLimiter" }
+      { "name": "REPORT_LIMITER", "class_name": "ReportLimiter" },
+      // One instance per H3 cell: serializes the read-decide-write of report intake, which D1 cannot do with a lock.
+      { "name": "CELL_COORDINATOR", "class_name": "CellCoordinator" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["Scheduler", "ReportLimiter"] }
+    { "tag": "v1", "new_sqlite_classes": ["Scheduler", "ReportLimiter"] },
+    { "tag": "v2", "new_sqlite_classes": ["CellCoordinator"] }
   ],
   // Global per-IP limit (was RATE_LIMIT_MAX per RATE_LIMIT_WINDOW_MS in memory).
   "ratelimits": [
@@ -39,8 +41,8 @@
     "ALERT_DISPATCH_ENABLED": "false",
     "RETENTION_WORKER_ENABLED": "false",
     "H3_RESOLUTION": "9",
-    // Above Neon's 5-minute idle suspend, so expiry does not keep the database awake. Public reads already hide
-    // expired episodes, so this job only materialises the closure.
+    // Hourly is enough: public reads already hide expired episodes, so this job only materialises the closure
+    // and an idle database is not queried more often than needed.
     "EPISODE_EXPIRY_INTERVAL_SECONDS": "3600"
   }
   // Secrets (set with `wrangler secret put`, never committed): DEVICE_TOKEN_SECRET, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID.

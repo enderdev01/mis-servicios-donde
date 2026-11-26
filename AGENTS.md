@@ -5,7 +5,8 @@
 - `node scripts/control.mjs doctor`: checks Node, dependencies, git hooks and that you are on a work branch.
 - `node scripts/control.mjs verify`: runs the root `typecheck`, `lint` and `test` scripts and reports each step. A full run that passes records the tree, so the next one on the same tree is skipped.
 - `node scripts/control.mjs verify --changed [path...]`: the same scripts filtered to the given repo-relative paths, or to the diff against the merge-base plus untracked files, while you iterate. It does not record the tree: finish with a full `verify`.
-- Integration and browser checks are not part of `verify`: `npm run test:integration` needs `docker compose up -d postgres`, and `node_modules/.bin/playwright test` builds and serves the web app on port 4331.
+- The Worker's D1 integration tests run inside `verify` (the `test` step, via `@cloudflare/vitest-pool-workers`); they need no database or Docker.
+- Browser checks are not part of `verify`: `node_modules/.bin/playwright test` builds and serves the web app on port 4331.
 - Known failure: `npm run lint` reports 10 errors in the untracked `videos/` folder (`window` and `document` not defined, one unused variable). They are not application code. Do not edit them to make `verify` green.
 
 ## Feature map

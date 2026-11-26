@@ -1,25 +1,20 @@
-import { AlertsService } from './alerts/alerts.service.js';
 import type { RequestContext } from './app.js';
-import { ConsensusService } from './consensus/consensus.service.js';
-import { DatabasePool } from './database/database.pool.js';
-import type { Env } from './env.js';
 import { NoticesService } from './notices/notices.service.js';
 import { PublicCellsService } from './public-map/public-cells.service.js';
 import { ReportsService } from './reports/reports.service.js';
+import type { Env } from './env.js';
 
-/** Wires the services to one request-scoped database; nothing here outlives the request. */
+/** Wires the services to the D1 binding; nothing here outlives the request. */
 export function createRequestContext(env: Env): RequestContext {
-  const database = new DatabasePool(env.HYPERDRIVE.connectionString);
-  const consensus = new ConsensusService(new AlertsService(database), database);
   return {
-    reports: new ReportsService(consensus, database),
-    cells: new PublicCellsService(database),
-    notices: new NoticesService(database),
+    reports: new ReportsService(env.DB, (h3Cell, job) => env.CELL_COORDINATOR.get(env.CELL_COORDINATOR.idFromName(h3Cell)).intake(job)),
+    cells: new PublicCellsService(env.DB),
+    notices: new NoticesService(env.DB),
     limits: {
       global: async (ip) => (env.GLOBAL_LIMITER ? (await env.GLOBAL_LIMITER.limit({ key: ip })).success : true),
       report: async (ip) => env.REPORT_LIMITER.get(env.REPORT_LIMITER.idFromName(await hashClientKey(ip))).hit(),
     },
-    dispose: () => database.close(),
+    dispose: () => Promise.resolve(),
   };
 }
 

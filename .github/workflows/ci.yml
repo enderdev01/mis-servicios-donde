@@ -24,22 +24,6 @@ jobs:
 
   verify:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_DB: mis_servicios_test
-          POSTGRES_PASSWORD: mis_servicios
-          POSTGRES_USER: mis_servicios
-        options: >-
-          --health-cmd "pg_isready -U mis_servicios -d mis_servicios_test"
-          --health-interval 2s
-          --health-timeout 3s
-          --health-retries 15
-        ports:
-          - 54329:5432
-    env:
-      TEST_DATABASE_URL: postgresql://mis_servicios:mis_servicios@127.0.0.1:54329/mis_servicios_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -49,6 +33,5 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run check
-      - run: npm run test:integration
       - run: npm run test:e2e
       - run: npm run build

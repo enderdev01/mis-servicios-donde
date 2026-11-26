@@ -4,6 +4,7 @@ import type { Env } from './env.js';
 
 export { ReportLimiter } from './security/report-limiter.js';
 export { Scheduler } from './scheduler/scheduler.js';
+export { CellCoordinator } from './consensus/cell-coordinator.js';
 
 const app = createApp(createRequestContext);
 let schedulerArmed = false;

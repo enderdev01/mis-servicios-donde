@@ -22,8 +22,8 @@ const APP = {
   expect: "<title>Mis Servicios | Mapa comunitario de cortes</title>",
 };
 // The API the feature commands call. Override with --base <url> or CONTROL_API_BASE.
-// Local default: npm run start:dev --workspace @mis-servicios/api (needs docker compose up -d postgres).
-const API_BASE = "http://127.0.0.1:3000";
+// Local default: the Worker under wrangler dev (npm run db:migrate:local -w @mis-servicios/worker && npm run dev -w @mis-servicios/worker).
+const API_BASE = "http://127.0.0.1:8787";
 
 const HELP = `Usage: node scripts/control.mjs <command> [--json]
 
@@ -238,11 +238,51 @@ function changedPaths() {
   return [...new Set(`${diff.stdout}\n${untracked.stdout}`.split("\n").map((s) => s.trim()).filter(Boolean))];
 }
 
+// A directory argument stands for every file under it (tracked or untracked), as a prefix.
+function expandDirs(paths) {
+  return paths.flatMap((p) => {
+    if (!existsSync(join(root, p)) || !statSync(join(root, p)).isDirectory()) return [p];
+    return gitQuiet("ls-files", "--cached", "--others", "--exclude-standard", "--", p).stdout.split("\n").filter(Boolean);
+  });
+}
+
 // Typecheck and lint take JS/TS. Test also takes C# so a Unity script still reaches the test script.
+// Deleted files are dropped: eslint and the test runner fail on a path that no longer exists.
 function filesFor(step, files) {
-  const code = files.filter((f) => CODE_FILE.test(f));
+  const code = files.filter((f) => CODE_FILE.test(f) && existsSync(join(root, f)));
   if (step === "typecheck" || step === "lint") return code;
-  return [...code, ...files.filter((f) => f.endsWith(".cs"))];
+  return [...code, ...files.filter((f) => f.endsWith(".cs") && existsSync(join(root, f)))];
+}
+
+// tsc refuses files on the command line next to a tsconfig (TS5112), so typecheck runs each affected
+// workspace's own script; a file outside every workspace runs the root script.
+function typecheckArgs(files) {
+  const args = [];
+  let rootToo = false;
+  const workspaces = new Set();
+  for (const f of files) {
+    const dir = f.split("/").slice(0, 2).join("/");
+    if (existsSync(join(root, dir, "package.json"))) workspaces.add(dir);
+    else rootToo = true;
+  }
+  for (const dir of workspaces) {
+    const name = JSON.parse(readFileSync(join(root, dir, "package.json"), "utf8")).name;
+    args.push(["run", "typecheck", "--silent", "-w", name, "--if-present"]);
+  }
+  if (rootToo || args.length === 0) args.push(["run", "typecheck", "--silent"]);
+  return args;
+}
+
+// Several commands become one step: the first failure wins, times add up.
+async function runTypecheck(files, timeoutMs) {
+  const all = [];
+  for (const a of typecheckArgs(files)) {
+    const r = await runStep("npm", a, timeoutMs);
+    all.push(r);
+    if (!r.ok) break;
+  }
+  const last = all[all.length - 1];
+  return { ...last, ms: all.reduce((n, r) => n + r.ms, 0) };
 }
 
 async function verify(lineArgs = []) {
@@ -270,7 +310,7 @@ async function verify(lineArgs = []) {
   }
   let changedFiles = null;
   if (parsed.changed) {
-    changedFiles = parsed.paths.length ? parsed.paths : changedPaths();
+    changedFiles = parsed.paths.length ? expandDirs(parsed.paths) : changedPaths();
     if (!changedFiles) report(false, { error: "could not list changed paths" }, "FAIL verify --changed could not list changed paths  ->  pass the paths, or run verify");
   }
   const before = parsed.changed ? null : treeState();
@@ -282,7 +322,8 @@ async function verify(lineArgs = []) {
         steps.push({ step, ok: true, ms: 0, output: "", skipped: "no matching paths" });
         continue;
       }
-      steps.push({ step, ...(await runStep("npm", ["run", step, "--silent", "--", ...matched], timeoutMs)) });
+      if (step === "typecheck") steps.push({ step, ...(await runTypecheck(matched, timeoutMs)) });
+      else steps.push({ step, ...(await runStep("npm", ["run", step, "--silent", "--", ...matched], timeoutMs)) });
     } else steps.push({ step, ...(await runStep("npm", ["run", step, "--silent"], timeoutMs)) });
   }
   const ok = steps.every((s) => s.ok);
@@ -434,7 +475,7 @@ async function api(lineArgs, method, path, body) {
       signal: AbortSignal.timeout(15000),
     });
   } catch (e) {
-    fail(`${base} did not answer (${e.cause?.code ?? e.message})`, "start the API (docker compose up -d postgres; npm run start:dev --workspace @mis-servicios/api) or pass --base <url>");
+    fail(`${base} did not answer (${e.cause?.code ?? e.message})`, "start the Worker (npm run db:migrate:local -w @mis-servicios/worker && npm run dev -w @mis-servicios/worker) or pass --base <url>");
   }
   const text = await res.text();
   let data = text;
@@ -454,7 +495,7 @@ async function zones(lineArgs) {
   const { status, data, base } = await api(lineArgs, "GET", "/v1/zones");
   const ok = status === 200 && Array.isArray(data);
   const slugs = ok ? data.map((z) => z.slug) : [];
-  report(ok, { base, status, count: slugs.length, slugs }, ok ? `ok  zones ${base}: ${slugs.length} approved (${slugs.join(", ") || "none: run npm run db:seed --workspace @mis-servicios/api"})` : `FAIL zones ${base} -> HTTP ${status}  ->  a 500 means the API cannot reach the database`);
+  report(ok, { base, status, count: slugs.length, slugs }, ok ? `ok  zones ${base}: ${slugs.length} approved (${slugs.join(", ") || "none: apply the D1 migrations with npm run db:migrate:local -w @mis-servicios/worker"})` : `FAIL zones ${base} -> HTTP ${status}  ->  a 500 means the API cannot reach the database`);
 }
 
 async function cells(lineArgs) {

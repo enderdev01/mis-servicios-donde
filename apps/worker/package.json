@@ -7,6 +7,8 @@
     "build": "wrangler deploy --dry-run --outdir dist",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
     "typecheck": "wrangler types --include-env=false && tsc --noEmit",
     "test:unit": "vitest run --config vitest.config.ts",
     "types": "wrangler types --include-env=false",
@@ -15,11 +17,10 @@
   "dependencies": {
     "@mis-servicios/contracts": "*",
     "h3-js": "^4.5.0",
-    "hono": "^4.13.14",
-    "pg": "^8.23.0"
+    "hono": "^4.13.14"
   },
   "devDependencies": {
-    "@types/pg": "^8.23.1",
+    "@cloudflare/vitest-pool-workers": "^0.23.0",
     "wrangler": "^4.156.0"
   }
 }

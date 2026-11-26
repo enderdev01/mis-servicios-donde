@@ -1,5 +1,6 @@
 import { providerCatalog, providerSchema, type Provider, type Service } from '@mis-servicios/contracts';
-import { DatabasePool } from '../database/database.pool.js';
+
+import { nowSql, selectRows } from '../database/d1.js';
 
 const publicServices = new Set(['water', 'electricity', 'internet']);
 
@@ -12,8 +13,18 @@ export interface PublicCell {
   reports: number;
 }
 
+/** The latest event of each device per cell, service and provider (SQLite has no DISTINCT ON). */
+const latestEvents = `latest AS (
+  SELECT "h3Cell", "service", "provider", "status" FROM (
+    SELECT event."h3Cell", event."service", event."provider", event."status",
+      ROW_NUMBER() OVER (PARTITION BY event."h3Cell", event."service", event."provider", event."deviceToken" ORDER BY event."createdAt" DESC, event."id" DESC) AS "rank"
+    FROM "ReportEvent" AS event
+    WHERE event."expiresAt" > ${nowSql}
+  ) WHERE "rank" = 1
+)`;
+
 export class PublicCellsService {
-  constructor(private readonly database: DatabasePool) {}
+  constructor(private readonly db: D1Database) {}
 
   async listCells(service?: unknown, provider?: unknown): Promise<PublicCell[]> {
     if (!isSupportedService(service) || !isSupportedProvider(provider, service) || !(await this.isPublicationEnabled())) return [];
@@ -23,56 +34,47 @@ export class PublicCellsService {
       const conditions: string[] = [];
       if (service) {
         values.push(service);
-        conditions.push(`${column}."service" = $${values.length}::"Service"`);
+        conditions.push(`${column}."service" = ?`);
       }
       if (provider) {
         values.push(provider);
-        conditions.push(`${column}."provider" = $${values.length}::"Provider"`);
+        conditions.push(`${column}."provider" = ?`);
       }
       return { sql: conditions.length ? ` AND ${conditions.join(' AND ')}` : '', values };
     };
     const episodeFilter = filters('episode');
-    const eventFilter = filters('event');
+    const eventFilter = filters('latest');
 
-    const confirmed = await this.database.query<PublicCell>(
-      `WITH latest AS (
-        SELECT DISTINCT ON (event."h3Cell", event."service", event."provider", event."deviceToken") event."h3Cell", event."service", event."provider", event."deviceToken", event."status"
-        FROM "ReportEvent" AS event
-        WHERE event."expiresAt" > CURRENT_TIMESTAMP
-        ORDER BY event."h3Cell", event."service", event."provider", event."deviceToken", event."createdAt" DESC, event."id" DESC
-      )
-      SELECT episode."h3Cell", episode."service", episode."provider", true AS "confirmed", count(*)::int AS "reports"
+    const confirmed = await selectRows<{ h3Cell: string; service: Service; provider: Provider; confirmed: number; reports: number }>(
+      this.db,
+      `WITH ${latestEvents}
+      SELECT episode."h3Cell", episode."service", episode."provider", 1 AS "confirmed", count(*) AS "reports"
       FROM "OutageEpisode" AS episode
       INNER JOIN "PilotZone" AS zone ON zone."id" = episode."zoneId"
       INNER JOIN latest ON latest."h3Cell" = episode."h3Cell" AND latest."service" = episode."service" AND latest."provider" = episode."provider" AND latest."status" = 'outage'
-      WHERE episode."active" = true AND episode."expiresAt" > CURRENT_TIMESTAMP AND zone."approved" = true${episodeFilter.sql}
+      WHERE episode."active" = 1 AND episode."expiresAt" > ${nowSql} AND zone."approved" = 1${episodeFilter.sql}
       GROUP BY episode."id", episode."h3Cell", episode."service", episode."provider"`,
       episodeFilter.values,
     );
 
-    const pending = await this.database.query<PublicCell>(
-      `WITH latest AS (
-        SELECT DISTINCT ON (event."h3Cell", event."service", event."provider", event."deviceToken") event."h3Cell", event."service", event."provider", event."deviceToken", event."status"
-        FROM "ReportEvent" AS event
-        WHERE event."expiresAt" > CURRENT_TIMESTAMP
-        ORDER BY event."h3Cell", event."service", event."provider", event."deviceToken", event."createdAt" DESC, event."id" DESC
-      )
-      SELECT latest."h3Cell", latest."service", latest."provider", false AS "confirmed", count(*)::int AS "reports"
+    const pending = await selectRows<{ h3Cell: string; service: Service; provider: Provider; confirmed: number; reports: number }>(
+      this.db,
+      `WITH ${latestEvents}
+      SELECT latest."h3Cell", latest."service", latest."provider", 0 AS "confirmed", count(*) AS "reports"
       FROM latest
       WHERE latest."status" = 'outage'
-        AND NOT EXISTS (SELECT 1 FROM "OutageEpisode" AS episode WHERE episode."h3Cell" = latest."h3Cell" AND episode."service" = latest."service" AND episode."provider" IS NOT DISTINCT FROM latest."provider")${eventFilter.sql.replaceAll('event.', 'latest.')}
+        AND NOT EXISTS (SELECT 1 FROM "OutageEpisode" AS episode WHERE episode."h3Cell" = latest."h3Cell" AND episode."service" = latest."service" AND episode."provider" IS latest."provider")${eventFilter.sql}
       GROUP BY latest."h3Cell", latest."service", latest."provider"`,
       eventFilter.values,
     );
 
-    return [...confirmed.rows, ...pending.rows];
+    return [...confirmed, ...pending].map((cell) => ({ ...cell, confirmed: cell.confirmed === 1 }));
   }
 
   private async isPublicationEnabled(): Promise<boolean> {
     if (process.env.PUBLIC_MAP_ENABLED !== 'true' || !hasConfiguredH3Resolution()) return false;
-    const zones = await this.database.query<{ count: string }>('SELECT count(*) FROM "PilotZone" WHERE "approved" = true');
-    const count = Number(zones.rows[0]?.count ?? 0);
-    return count >= 2;
+    const [zones] = await selectRows<{ count: number }>(this.db, 'SELECT count(*) AS "count" FROM "PilotZone" WHERE "approved" = 1');
+    return Number(zones?.count ?? 0) >= 2;
   }
 }
 
