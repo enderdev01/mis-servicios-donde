@@ -1,6 +1,4 @@
-import pg from 'pg';
-
-import { DatabasePool } from '../database/database.pool.js';
+import { nowSql, offsetSql } from '../database/d1.js';
 
 export interface RetentionResult {
   displayNames: number;
@@ -19,45 +17,30 @@ export interface PilotPurgeResult {
 }
 
 export class RetentionService {
-  constructor(private readonly database: DatabasePool) {}
+  constructor(private readonly db: D1Database) {}
 
+  /** Counts come from RETURNING: D1's `meta.changes` also counts rows removed by ON DELETE CASCADE. */
   async cleanup(): Promise<RetentionResult> {
-    const client = await this.database.connect();
-    try {
-      await client.query('BEGIN');
-      const displayNames = await deleteExpired(client, 'ReportDisplayName');
-      const events = await deleteExpired(client, 'ReportEvent');
-      const submissions = await deleteExpired(client, 'SubmissionRecord');
-      const abuseRecords = await deleteExpired(client, 'AbuseRecord');
-      const alertIntents = await client.query('DELETE FROM "AlertIntent" WHERE "createdAt" <= CURRENT_TIMESTAMP - INTERVAL \'30 days\'');
-      await client.query('COMMIT');
-      return { displayNames, events, submissions, abuseRecords, alertIntents: alertIntents.rowCount ?? 0 };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    const [displayNames, events, submissions, abuseRecords, alertIntents] = await this.db.batch([
+      deleteExpired(this.db, 'ReportDisplayName'),
+      deleteExpired(this.db, 'ReportEvent'),
+      deleteExpired(this.db, 'SubmissionRecord'),
+      deleteExpired(this.db, 'AbuseRecord'),
+      this.db.prepare(`DELETE FROM "AlertIntent" WHERE "createdAt" <= ${offsetSql('-30 days')} RETURNING 1`),
+    ]);
+    return { displayNames: deleted(displayNames), events: deleted(events), submissions: deleted(submissions), abuseRecords: deleted(abuseRecords), alertIntents: deleted(alertIntents) };
   }
 
   async purgePilotData(): Promise<PilotPurgeResult> {
-    const client = await this.database.connect();
-    try {
-      await client.query('BEGIN');
-      const displayNames = await deleteAll(client, 'ReportDisplayName');
-      const events = await deleteAll(client, 'ReportEvent');
-      const submissions = await deleteAll(client, 'SubmissionRecord');
-      const abuseRecords = await deleteAll(client, 'AbuseRecord');
-      const episodes = await deleteAll(client, 'OutageEpisode');
-      await client.query('COMMIT');
-      return { displayNames, events, submissions, abuseRecords, episodes };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    const [displayNames, events, submissions, abuseRecords, episodes] = await this.db.batch(
+      ['ReportDisplayName', 'ReportEvent', 'SubmissionRecord', 'AbuseRecord', 'OutageEpisode'].map((table) => this.db.prepare(`DELETE FROM "${table}" RETURNING 1`)),
+    );
+    return { displayNames: deleted(displayNames), events: deleted(events), submissions: deleted(submissions), abuseRecords: deleted(abuseRecords), episodes: deleted(episodes) };
   }
+}
+
+function deleted(result: D1Result | undefined): number {
+  return result?.results.length ?? 0;
 }
 
 export const retentionIntervalMs = 24 * 60 * 60 * 1000;
@@ -114,12 +97,6 @@ function numericPart(parts: Intl.DateTimeFormatPart[], type: Intl.DateTimeFormat
   return Number(value);
 }
 
-async function deleteExpired(client: pg.PoolClient, table: 'ReportDisplayName' | 'ReportEvent' | 'SubmissionRecord' | 'AbuseRecord'): Promise<number> {
-  const result = await client.query(`DELETE FROM "${table}" WHERE "expiresAt" <= CURRENT_TIMESTAMP`);
-  return result.rowCount ?? 0;
-}
-
-async function deleteAll(client: pg.PoolClient, table: 'ReportDisplayName' | 'ReportEvent' | 'SubmissionRecord' | 'AbuseRecord' | 'OutageEpisode'): Promise<number> {
-  const result = await client.query(`DELETE FROM "${table}"`);
-  return result.rowCount ?? 0;
+function deleteExpired(db: D1Database, table: 'ReportDisplayName' | 'ReportEvent' | 'SubmissionRecord' | 'AbuseRecord'): D1PreparedStatement {
+  return db.prepare(`DELETE FROM "${table}" WHERE "expiresAt" <= ${nowSql} RETURNING 1`);
 }

@@ -1,4 +1,4 @@
-import { DatabasePool } from '../database/database.pool.js';
+import { selectRows } from '../database/d1.js';
 
 export class ZoneNotFoundError extends Error {}
 
@@ -36,19 +36,20 @@ export function printableNotice(input: { name: string }): PrintableNotice {
 }
 
 export class NoticesService {
-  constructor(private readonly database: DatabasePool) {}
+  constructor(private readonly db: D1Database) {}
 
   async forApprovedZone(slug: string): Promise<PrintableNotice> {
-    const zone = await this.database.query<ZoneRow>('SELECT "name" FROM "PilotZone" WHERE "slug" = $1 AND "approved" = true', [slug]);
-    if (!zone.rows[0]) throw new ZoneNotFoundError();
-    return printableNotice(zone.rows[0]);
+    const [zone] = await selectRows<ZoneRow>(this.db, 'SELECT "name" FROM "PilotZone" WHERE "slug" = ? AND "approved" = 1', [slug]);
+    if (!zone) throw new ZoneNotFoundError();
+    return printableNotice(zone);
   }
 
   /** The approved districts, with their bounds, so the map can centre on one. */
   async listApprovedZones(): Promise<ZoneSummary[]> {
-    const zones = await this.database.query<{ slug: string; name: string; boundary: ZoneBoundary }>(
-      'SELECT "slug", "name", "boundary" FROM "PilotZone" WHERE "approved" = true ORDER BY "slug"',
+    const zones = await selectRows<{ slug: string; name: string; boundary: string }>(
+      this.db,
+      'SELECT "slug", "name", "boundary" FROM "PilotZone" WHERE "approved" = 1 ORDER BY "slug"',
     );
-    return zones.rows;
+    return zones.map((zone) => ({ ...zone, boundary: JSON.parse(zone.boundary) as ZoneBoundary }));
   }
 }

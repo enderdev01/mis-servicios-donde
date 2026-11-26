@@ -2,7 +2,6 @@ import { DurableObject } from 'cloudflare:workers';
 
 import { AlertsService, dispatchCycleDelayMs, idleIntervalNormalizationWarning } from '../alerts/alerts.service.js';
 import { ConsensusService } from '../consensus/consensus.service.js';
-import { DatabasePool } from '../database/database.pool.js';
 import type { Env } from '../env.js';
 import { RetentionService } from '../retention/retention.service.js';
 import { configuredIntervalMs } from '../workers/interval-worker.js';
@@ -23,26 +22,21 @@ export class Scheduler extends DurableObject<Env> {
     const warning = idleIntervalNormalizationWarning(idleIntervalMs, dispatchIntervalMs);
     if (warning) console.warn(warning);
 
-    const database = new DatabasePool(this.env.HYPERDRIVE.connectionString);
-    try {
-      const alerts = new AlertsService(database);
-      const consensus = new ConsensusService(alerts, database);
-      const retention = new RetentionService(database);
-      const state = (await this.ctx.storage.get<SchedulerState>('state')) ?? { next: {} };
-      const result = await runDueJobs(
-        Date.now(),
-        state,
-        {
-          dispatch: async () => dispatchCycleDelayMs(await alerts.dispatchPending(), dispatchIntervalMs, idleIntervalMs),
-          expiry: () => consensus.expireStaleEpisodes(),
-          retention: () => retention.cleanup(),
-        },
-        { dispatchIntervalMs, expiryIntervalMs, retentionEnabled: process.env.RETENTION_WORKER_ENABLED === 'true' },
-      );
-      await this.ctx.storage.put('state', result.state);
-      await this.ctx.storage.setAlarm(result.nextAlarmAt);
-    } finally {
-      await database.close();
-    }
+    const alerts = new AlertsService(this.env.DB);
+    const consensus = new ConsensusService(alerts, this.env.DB);
+    const retention = new RetentionService(this.env.DB);
+    const state = (await this.ctx.storage.get<SchedulerState>('state')) ?? { next: {} };
+    const result = await runDueJobs(
+      Date.now(),
+      state,
+      {
+        dispatch: async () => dispatchCycleDelayMs(await alerts.dispatchPending(), dispatchIntervalMs, idleIntervalMs),
+        expiry: () => consensus.expireStaleEpisodes(),
+        retention: () => retention.cleanup(),
+      },
+      { dispatchIntervalMs, expiryIntervalMs, retentionEnabled: process.env.RETENTION_WORKER_ENABLED === 'true' },
+    );
+    await this.ctx.storage.put('state', result.state);
+    await this.ctx.storage.setAlarm(result.nextAlarmAt);
   }
 }

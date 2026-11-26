@@ -1,13 +1,13 @@
 # API features
 
-Commands below were run against production (`--base https://mis-servicios-api.onilabs-dev.workers.dev`) on 2026-11-23, with the Worker's gates `PUBLIC_MAP_ENABLED=true`, the others `false`. Without `--base` they call `http://127.0.0.1:3000`; if nothing listens there the command exits 1 with `did not answer (ECONNREFUSED)  ->  start the API (...)`.
+Commands below were run against production (`--base https://mis-servicios-api.onilabs-dev.workers.dev`) on 2026-11-23, with the Worker's gates `PUBLIC_MAP_ENABLED=true`, the others `false`. Without `--base` they call `http://127.0.0.1:8787` (wrangler dev); if nothing listens there the command exits 1 with `did not answer (ECONNREFUSED)  ->  start the Worker (...)`.
 
 ## Health
 
 | Input | Observed output | Exit |
 |---|---|---|
 | `node scripts/control.mjs health --base <prod>` | `ok  health <prod> -> 200 {"status":"ok"}` | 0 |
-| `node scripts/control.mjs health` with no API on 3000 | `FAIL http://127.0.0.1:3000 did not answer (ECONNREFUSED)  ->  start the API (docker compose up -d postgres; npm run start:dev --workspace @mis-servicios/api) or pass --base <url>` | 1 |
+| `node scripts/control.mjs health` with no Worker on 8787 | `FAIL http://127.0.0.1:8787 did not answer (ECONNREFUSED)  ->  start the Worker (npm run db:migrate:local -w @mis-servicios/worker && npm run dev -w @mis-servicios/worker) or pass --base <url>` | 1 |
 
 Health never queries the database, so it stays green when both data routes fail. Always check `zones` too.
 
@@ -18,7 +18,7 @@ Health never queries the database, so it stays green when both data routes fail.
 | `node scripts/control.mjs zones --base <prod>` | `ok  zones <prod>: 10 approved (brena, cercado-de-lima, jesus-maria, lince, magdalena-del-mar, rimac, san-borja, san-isidro, san-juan-de-lurigancho, san-martin-de-porres)` | 0 |
 | `... zones --json` | JSON with `ok`, `base`, `status`, `count: 10`, `slugs` | 0 |
 
-Edge cases: an empty list means the seed did not run (`npm run db:seed --workspace @mis-servicios/api`); a 500 means the API cannot reach the database.
+Edge cases: an empty list means the D1 migrations did not run (`npm run db:migrate:local -w @mis-servicios/worker`; migration 0002 inserts the zones); a 500 means the Worker cannot reach D1.
 
 ## Zone notice
 
@@ -36,7 +36,7 @@ Edge cases: an empty list means the seed did not run (`npm run db:seed --workspa
 | `cells --service water --provider claro --base <prod>` | same, 0 cells | 0 |
 | `cells --service gas --base <prod>` | same, 0 cells (an unsupported service gives an empty list, not an error) | 0 |
 
-To see a non-empty list, run the local stack with `INTAKE_ENABLED=true PUBLIC_MAP_ENABLED=true H3_RESOLUTION=9 DEVICE_TOKEN_SECRET=<anything>` and have three different `--device` ids report an outage in the same zone (episode quorum is 3 devices in 60 minutes).
+To see a non-empty list, run `npm run dev -w @mis-servicios/worker -- --var INTAKE_ENABLED:true --var PUBLIC_MAP_ENABLED:true --var DEVICE_TOKEN_SECRET:<anything>` (`H3_RESOLUTION` is 9 in `wrangler.jsonc`) and have three different `--device` ids report an outage in the same zone (episode quorum is 3 devices in 60 minutes).
 
 ## Submit report (writes)
 
