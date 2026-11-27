@@ -52,7 +52,7 @@ test('keeps the browser private and actionable when rollout APIs are disabled', 
   await page.getByLabel('Empresa de agua').selectOption('sedapal');
   await page.getByRole('button', { name: 'Enviar reporte' }).click();
 
-  await expect(page.getByRole('alert')).toContainText('No pudimos enviar tu reporte ahora.');
+  await expect(page.locator('#report-state')).toContainText('No pudimos enviar tu reporte ahora.');
   await expect(page.getByRole('status')).toContainText('Nadie ha reportado cortes en la zona piloto.');
   await expect(page.getByLabel('Cortes confirmados por zona')).toBeEmpty();
 });

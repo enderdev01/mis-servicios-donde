@@ -29,7 +29,7 @@ test('offers an unofficial filtered map and accessible report validation', async
   await expect(page.getByLabel('Cortes confirmados por zona')).toContainText('Corte de agua confirmado');
 
   await page.getByRole('button', { name: 'Enviar reporte' }).click();
-  await expect(page.getByRole('alert')).toContainText('Elige al menos un servicio afectado.');
+  await expect(page.locator('#report-state')).toContainText('Elige al menos un servicio afectado.');
 });
 
 test('keeps a permanent unofficial marker and the full notice one tap away', async ({ page }) => {

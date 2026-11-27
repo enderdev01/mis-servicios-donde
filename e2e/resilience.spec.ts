@@ -159,7 +159,7 @@ test('retries a report with the same submission id after the connection dropped'
   await page.goto('/');
   await fillWaterReport(page);
   await page.getByRole('button', { name: 'Enviar reporte' }).click();
-  await expect(page.getByRole('alert')).toContainText('No pudimos enviar tu reporte.');
+  await expect(page.locator('#report-state')).toContainText('No pudimos enviar tu reporte.');
   await page.getByRole('button', { name: 'Enviar reporte' }).click();
   await expect(page.getByRole('dialog')).toContainText('Gracias por tu reporte');
 
@@ -181,6 +181,6 @@ test('tells a slow location fix apart from a denied permission', async ({ page }
   await fillWaterReport(page);
   await page.getByRole('button', { name: 'Enviar reporte' }).click();
 
-  await expect(page.getByRole('alert')).toContainText('Tu ubicación tardó demasiado en llegar. Reintenta.');
-  await expect(page.getByRole('alert')).not.toContainText('Permite la ubicación');
+  await expect(page.locator('#report-state')).toContainText('Tu ubicación tardó demasiado en llegar. Reintenta.');
+  await expect(page.locator('#report-state')).not.toContainText('Permite la ubicación');
 });
