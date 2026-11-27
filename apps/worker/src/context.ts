@@ -1,10 +1,9 @@
-import type { RequestContext } from './app.js';
+import { ServiceUnavailableError, type RequestContext } from './app.js';
 import { NoticesService } from './notices/notices.service.js';
 import { PublicCellsService } from './public-map/public-cells.service.js';
 import { ReportsService } from './reports/reports.service.js';
 import type { Env } from './env.js';
-import type { LimitKind } from './security/window-counter.js';
-import { issueDeviceId, verifyDeviceId } from './trust/trust.service.js';
+import { issueDeviceId, limiterName, verifyDeviceId } from './trust/trust.service.js';
 
 /** Wires the services to the D1 binding; nothing here outlives the request. */
 export function createRequestContext(env: Env): RequestContext {
@@ -13,8 +12,15 @@ export function createRequestContext(env: Env): RequestContext {
     cells: new PublicCellsService(env.DB),
     notices: new NoticesService(env.DB),
     limits: {
-      global: async (ip) => (env.GLOBAL_LIMITER ? (await env.GLOBAL_LIMITER.limit({ key: ip })).success : true),
-      hit: async (kind, key) => env.REPORT_LIMITER.get(env.REPORT_LIMITER.idFromName(await hashClientKey(kind, key))).hit(kind),
+      global: async (ip) => {
+        // Fail closed: a missing binding is a deploy mistake, never a reason to let traffic through.
+        if (!env.GLOBAL_LIMITER) throw new ServiceUnavailableError('GLOBAL_LIMITER binding is missing');
+        return (await env.GLOBAL_LIMITER.limit({ key: ip })).success;
+      },
+      hit: async (kind, key) => {
+        if (!secret()) throw new ServiceUnavailableError('DEVICE_TOKEN_SECRET is missing');
+        return env.REPORT_LIMITER.get(env.REPORT_LIMITER.idFromName(limiterName(kind, key, secret()))).hit(kind);
+      },
     },
     devices: {
       issue: () => (secret() ? issueDeviceId(secret()) : undefined),
@@ -25,9 +31,3 @@ export function createRequestContext(env: Env): RequestContext {
 }
 
 const secret = (): string => process.env.DEVICE_TOKEN_SECRET?.trim() ?? '';
-
-/** The limiter instance is named by a digest so a client IP or device id is never stored as an object name. */
-async function hashClientKey(kind: LimitKind, key: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${kind}-limit:${key}`));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}

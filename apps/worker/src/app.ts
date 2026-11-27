@@ -12,6 +12,9 @@ import type { LimitKind } from './security/window-counter.js';
 
 const JSON_BODY_LIMIT_BYTES = 10 * 1024;
 
+/** A server-side dependency the request cannot be served safely without (limiter binding, signing secret); answers 503. */
+export class ServiceUnavailableError extends Error {}
+
 export type ReportLimitResult = { allowed: true } | { allowed: false; retryAfterSeconds: number };
 
 /** Everything one request needs; built per request so no connection outlives it. */
@@ -114,7 +117,14 @@ export function createApp(makeContext: (env: Env) => RequestContext) {
     }
   });
 
-  app.onError((_error, c) => c.json({ statusCode: 500, message: 'Internal server error' }, 500));
+  app.onError((error, c) => {
+    if (error instanceof ServiceUnavailableError) {
+      // One log per request, no client data.
+      console.error(`service unavailable: ${error.message}`);
+      return c.json({ code: 'service_unavailable', message: 'Service unavailable.' }, 503);
+    }
+    return c.json({ statusCode: 500, message: 'Internal server error' }, 500);
+  });
 
   return app;
 }

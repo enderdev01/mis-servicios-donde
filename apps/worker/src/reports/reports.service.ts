@@ -30,11 +30,10 @@ export class ReportsService {
     if (!zone) throw outsidePilotZone();
     const h3Cell = latLngToCell(input.latitude, input.longitude, resolution);
     const deviceToken = createVersionedDeviceToken(input.deviceId, secret, 'v1');
-    const requestHash = canonicalSubmissionHash({
-      h3Cell,
-      services: input.services.map((service) => `${service}:${providerFor(input, service)}`),
-      status: input.status,
-    });
+    const requestHash = canonicalSubmissionHash(
+      { h3Cell, services: input.services.map((service) => `${service}:${providerFor(input, service)}`), status: input.status },
+      secret,
+    );
     const safeInput = { submissionId: input.submissionId, services: input.services, providers: input.providers, status: input.status, name: input.name };
     const outcome = await this.runIntake(h3Cell, { zoneId: zone.id, zoneName: zone.name, h3Cell, deviceToken, requestHash, input: safeInput });
     if ('rejected' in outcome) throw new ReportRequestError(outcome.status, outcome.rejected);

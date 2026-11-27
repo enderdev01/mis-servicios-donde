@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 
 export interface EligibilityInput {
   submittedAt: Date;
@@ -35,14 +35,21 @@ export function verifyDeviceId(value: unknown, secret: string): string | undefin
   return given.length === expected.length && timingSafeEqual(given, expected) ? id : undefined;
 }
 
-export function canonicalSubmissionHash(input: {
-  h3Cell: string;
-  services: string[];
-  status: string;
-}): string {
-  return createHash('sha256')
-    .update(JSON.stringify({ ...input, services: [...input.services].sort() }))
+/** HMAC under its own label (`request:`, apart from `device:` and `limit:`); an unkeyed digest of a small input space can be enumerated. */
+export function canonicalSubmissionHash(
+  input: { h3Cell: string; services: string[]; status: string },
+  secret: string,
+): string {
+  if (!secret) throw new Error('A secret is required to hash a submission.');
+  return createHmac('sha256', secret)
+    .update(`request:${JSON.stringify({ ...input, services: [...input.services].sort() })}`)
     .digest('hex');
+}
+
+/** Name of a limiter Durable Object: keyed so a client IP cannot be recovered from the name by enumerating IPv4. */
+export function limiterName(kind: string, key: string, secret: string): string {
+  if (!secret) throw new Error('A secret is required to name a limiter.');
+  return createHmac('sha256', secret).update(`limit:${kind}:${key}`).digest('hex');
 }
 
 export function sanitizeDisplayName(value?: string): string | undefined {
