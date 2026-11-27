@@ -123,6 +123,7 @@ test('reports from the area dialog through the same submit path', async ({ page 
   await page.locator('#cell-list .cell-row').first().click();
   await page.getByRole('button', { name: 'Ya volvió aquí' }).click();
   await expect(page.locator('#thanks')).toContainText('volvió');
+  await expect(page.locator('#thanks')).toBeVisible();
 
   expect(bodies).toHaveLength(2);
   expect(bodies[0]).toMatchObject({ services: ['water'], providers: { water: 'sedapal' }, status: 'outage', latitude: -12.0464, longitude: -77.0428 });
@@ -198,7 +199,8 @@ test('preselects the only company of a service and leaves the others to choose (
 
   await page.getByRole('checkbox', { name: 'Luz' }).uncheck();
   await page.getByRole('button', { name: 'Enviar reporte' }).click();
-  await expect(page.locator('#thanks')).toContainText('Gracias por tu reporte');
+  // The closed <dialog> already holds this text; the role only matches once it is open.
+  await expect(page.getByRole('dialog')).toContainText('Gracias por tu reporte');
   expect(bodies[0]).toMatchObject({ services: ['water'], providers: { water: 'sedapal' } });
 });
 
