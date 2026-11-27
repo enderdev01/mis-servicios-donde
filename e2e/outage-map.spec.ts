@@ -283,7 +283,7 @@ test('lists approximate streets only when every report in the area is confirmed'
 
   await page.locator('#cell-list .cell-row').first().click();
   const streets = page.locator('#cell-info-streets');
-  await expect(streets).toContainText('Calles en la zona (aproximado)');
+  await expect(streets).toContainText('Calles en esta área (aproximado)');
   await expect(streets).toContainText('Avenida Cajatambo');
   await expect(streets).toContainText('Abelardo Gamarra');
   await expect(streets).toContainText('Calle 1');
