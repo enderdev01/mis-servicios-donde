@@ -53,14 +53,13 @@ describe('dispatch cycle cadence', () => {
     await expect(service.dispatchPending()).resolves.toEqual({ claimedWork: false, nextDueInSeconds: 90 });
   });
 
-  it('keeps cancelling pending and retryable intents while dispatch is disabled', async () => {
+  it('issues no statements while dispatch is disabled', async () => {
     const { db, sqls } = fakeD1();
     const { AlertsService } = await import('./alerts.service.js');
     const service = new AlertsService(db);
 
     await expect(service.dispatchPending()).resolves.toEqual({ claimedWork: false, nextDueInSeconds: null });
-    expect(sqls).toHaveLength(1);
-    expect(sqls[0]).toContain("'cancelled'");
+    expect(sqls).toHaveLength(0);
   });
 
   it('derives the wake delay from the cycle summary inside the configured bounds', async () => {

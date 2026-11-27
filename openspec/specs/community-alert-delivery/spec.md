@@ -35,7 +35,7 @@ Telegram delivery **MUST** occur after report acceptance. Provider unavailabilit
 
 ### Requirement: Retryable dispatch
 
-Undelivered intents **MUST** be retried without changing their stable identity. The system **MUST** record whether an intent is pending, delivered, retryable, or cancelled. It **MUST NOT** claim exactly-once external delivery when provider behavior cannot guarantee it.
+Undelivered intents **MUST** be retried without changing their stable identity. The system **MUST** record whether an intent is pending, delivered, retryable, cancelled, or failed. It **MUST NOT** claim exactly-once external delivery when provider behavior cannot guarantee it.
 
 #### Scenario: Retry succeeds
 
@@ -43,11 +43,17 @@ Undelivered intents **MUST** be retried without changing their stable identity. 
 - WHEN a later delivery attempt succeeds
 - THEN the same intent MUST be marked delivered
 
+#### Scenario: Retries are bounded
+
+- GIVEN an intent whose delivery has failed on every attempt
+- WHEN the eighth attempt fails
+- THEN the intent MUST be marked failed, logged without its content, and never claimed again
+
 #### Scenario: Dispatch rollback
 
 - GIVEN alert dispatch is disabled during rollback
-- WHEN pending intents are evaluated
-- THEN they MUST be cancelled without affecting accepted outage state
+- WHEN a dispatch cycle runs
+- THEN pending and retryable intents MUST stay as they are, so re-enabling dispatch delivers them, without affecting accepted outage state
 
 ### Requirement: Alert scope and content
 

@@ -81,7 +81,7 @@ Do not commit `.env` or secret values. Locally, pass values with `--var` or a `.
 |---|---|---|
 | `INTAKE_ENABLED` | accepting reports | Must be exactly `true`, together with `RETENTION_WORKER_ENABLED`, before `POST /v1/reports` accepts data. |
 | `PUBLIC_MAP_ENABLED` | publishing map cells | Must be exactly `true`; publication also requires a valid H3 resolution and two or more approved database zones. |
-| `ALERT_DISPATCH_ENABLED` | delivering alerts | Must be exactly `true` to attempt Telegram delivery. Disabling it cancels pending and retryable intents. |
+| `ALERT_DISPATCH_ENABLED` | delivering alerts | Must be exactly `true` to attempt Telegram delivery. Disabling it pauses delivery and leaves pending and retryable intents untouched; they are sent once it is `true` again, unless retention (30 days) removes them first. |
 | `RETENTION_WORKER_ENABLED` | scheduled retention | Must be exactly `true` to run cleanup at the next midnight in Lima and then daily. |
 | `H3_RESOLUTION` | intake and public map | Integer from `0` through `15`. There is no code default: while it is missing or invalid, intake refuses every report and the public map publishes nothing. |
 | `ALERT_DISPATCH_INTERVAL_SECONDS` | optional | Shortest wait between dispatch cycles; the scheduler may wait longer when the outbox has nothing due. Positive integer, defaults to `30`. |
@@ -114,7 +114,7 @@ Device identity: the browser does not choose its own device id. `POST /v1/device
 |---|---|---|
 | Intake | `INTAKE_ENABLED=true` and `RETENTION_WORKER_ENABLED=true` | New reports receive the generic unavailable response and are not persisted. |
 | Public map | `PUBLIC_MAP_ENABLED=true`, valid H3 resolution, 2–3 approved zones | `GET /v1/cells` returns an empty list. |
-| Telegram dispatch | `ALERT_DISPATCH_ENABLED=true` plus both Telegram secrets | Pending and retryable intents are cancelled; accepted reports remain independent of provider delivery. |
+| Telegram dispatch | `ALERT_DISPATCH_ENABLED=true` plus both Telegram secrets | Pending and retryable intents wait untouched; accepted reports remain independent of provider delivery. |
 | Retention | `RETENTION_WORKER_ENABLED=true` | Cleanup runs at the next midnight in Lima, then daily; keep it enabled after data collection begins. |
 
 The outbox creates one durable opening intent per episode transition and retries Telegram failures with bounded exponential backoff. Delivery is **at least once**; an external provider can still receive a duplicate, so do not claim exactly-once delivery.
@@ -125,11 +125,11 @@ One `Scheduler` Durable Object alarm runs three jobs. Each re-arms only after it
 
 | Job | Runs when | Cycle |
 |---|---|---|
-| Alert dispatch | always | Claims due intents and delivers them while `ALERT_DISPATCH_ENABLED=true`; cancels pending and retryable intents while it is not. Wakes after the dispatch interval while work is pending, when the next retry is due, or after the idle interval when the outbox is empty. |
+| Alert dispatch | always | Claims due intents and delivers them while `ALERT_DISPATCH_ENABLED=true`; leaves the outbox untouched while it is not. A failed send is retried with backoff and marked `failed` (logged with `console.error`, never claimed again) after 8 attempts. Wakes after the dispatch interval while work is pending, when the next retry is due, or after the idle interval when the outbox is empty. |
 | Episode expiry | always | Closes episodes whose lifetime elapsed. Public reads already hide them by expiry, so this only materialises that closure. |
 | Retention cleanup | `RETENTION_WORKER_ENABLED=true` | Deletes records past their retention window. |
 
-> **Enable dispatch before intake.** The dispatch job runs continuously and its disabled branch cancels pending intents. If intake is enabled first, every episode that opens before dispatch is enabled has its alert cancelled at the next wake, and that alert is not recoverable.
+> **Enable dispatch before intake.** While dispatch is disabled, alerts queue up unsent. If intake is enabled first, alerts for episodes opened in the meantime are delivered late (up to one idle interval after enabling), possibly after the outage ended.
 
 An opening alert created while the scheduler sleeps waits until the next wake, up to one idle interval (30 minutes with the default). That is minor next to the episode time scales already in force (`OUTAGE_QUORUM_WINDOW_MINUTES` defaults to 60 minutes and `OUTAGE_EPISODE_LIFETIME_HOURS` to 6); lower `ALERT_DISPATCH_IDLE_INTERVAL_SECONDS` when alert latency matters more.
 
@@ -164,7 +164,7 @@ A `500` from either data endpoint means the Worker cannot reach D1 (migrations n
 
 ### Independent rollback boundaries
 
-1. **Dispatch:** set `ALERT_DISPATCH_ENABLED=false`; this cancels pending/retryable intents without rejecting reports.
+1. **Dispatch:** set `ALERT_DISPATCH_ENABLED=false`; this pauses delivery (intents stay queued) without rejecting reports.
 2. **Intake:** set `INTAKE_ENABLED=false`; this blocks new reports without removing existing data.
 3. **Publication:** set `PUBLIC_MAP_ENABLED=false`; this returns an empty map while reports and retention remain available.
 4. **Privacy rollback:** delete the report data in D1 (`wrangler d1 execute`) only when irreversible deletion is approved, keep the pilot-zone rows, and leave retention enabled afterward.
