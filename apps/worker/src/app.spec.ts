@@ -90,7 +90,7 @@ describe('worker app', () => {
 
     expect(response.status).toBe(429);
     expect(response.headers.get('retry-after')).toBe('60');
-    expect(await response.json()).toEqual({ code: 'rate_limited', message: 'Too many requests.' });
+    expect(await response.json()).toEqual({ code: 'rate_limited', message: 'Too many requests.', retryAfterSeconds: 60 });
     expect(ctx.cells.listCells).not.toHaveBeenCalled();
   });
 
@@ -100,6 +100,7 @@ describe('worker app', () => {
     const blocked = await call(ctx, '/v1/reports', post({}));
     expect(blocked.status).toBe(429);
     expect(blocked.headers.get('retry-after')).toBe('1800');
+    expect(await blocked.json()).toEqual({ code: 'rate_limited', message: 'Too many requests.', retryAfterSeconds: 1800 });
     expect(ctx.reports.accept).not.toHaveBeenCalled();
     expect(ctx.limits.report).toHaveBeenCalledWith('203.0.113.7');
 
