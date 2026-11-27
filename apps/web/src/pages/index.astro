@@ -136,7 +136,7 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
                 <select id="district-filter" name="district">
                   <option value="all">Todos</option>
                 </select>
-                <small class="district-approx" id="district-approx" hidden>{approximateDistrictLabel}</small>
+                <small class="district-approx" id="district-approx" aria-hidden="true" hidden>{approximateDistrictLabel}</small>
               </label>
               <label class="filter">
                 <span>Ver servicio</span>
@@ -847,7 +847,11 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
 
       /** «Distrito aproximado» shows only while the selected district is the page's own pick. */
       function syncDistrictNote(): void {
-        if (districtApprox && districtFilter) districtApprox.hidden = !(districtAuto && myDistrictSlug !== undefined && districtFilter.value === myDistrictSlug);
+        if (!districtApprox || !districtFilter) return;
+        districtApprox.hidden = !(districtAuto && myDistrictSlug !== undefined && districtFilter.value === myDistrictSlug);
+        // Described, not named: the select keeps «Ver distrito» as its accessible name.
+        if (districtApprox.hidden) districtFilter.removeAttribute('aria-describedby');
+        else districtFilter.setAttribute('aria-describedby', 'district-approx');
       }
 
       function populateDistrictFilter(): void {
