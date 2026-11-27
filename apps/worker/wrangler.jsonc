@@ -35,8 +35,8 @@
   "vars": {
     // Enable in order: map, dispatch (needs the Telegram secrets), retention, then intake. Intake is refused unless
     // retention is also on, because names must be purged in 24 h and events in 48 h.
-    // The map is on: it only publishes aggregated cells. Intake stays off until alerts can be delivered, because
-    // dispatch being off cancels every alert an episode creates and that cannot be recovered.
+    // The map is on: it only publishes aggregated cells. Intake stays off until alerts can be delivered: with
+    // dispatch off, alerts wait in the queue and go out late once it is turned on.
     "INTAKE_ENABLED": "false",
     "PUBLIC_MAP_ENABLED": "true",
     "ALERT_DISPATCH_ENABLED": "false",

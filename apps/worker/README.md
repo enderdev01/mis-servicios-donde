@@ -24,6 +24,16 @@ npm run dev -w @mis-servicios/worker -- --var INTAKE_ENABLED:true --var RETENTIO
 
 ## Deploy to production
 
+After the one-time setup below, every push to `master` deploys the Worker: the `deploy-worker` job in
+`.github/workflows/ci.yml` runs after `verify` passes, applies the remote D1 migrations, then runs `wrangler deploy`.
+It needs two secrets in the repository's `production` environment (Settings → Environments):
+
+- `CLOUDFLARE_API_TOKEN`: an API token with **Workers Scripts: Edit** and **D1: Edit** on the account.
+- `CLOUDFLARE_ACCOUNT_ID`: the account id shown in the Cloudflare dashboard.
+
+Migrations run before the deploy, so a migration must keep the running Worker working (add, do not rename or drop,
+in the same release). The steps below are the first deploy, or a manual one:
+
 1. **D1 database.** Create it and paste the printed id into `d1_databases[0].database_id` in `wrangler.jsonc`:
    ```sh
    npx wrangler d1 create mis-servicios
