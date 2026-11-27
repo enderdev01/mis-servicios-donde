@@ -53,12 +53,32 @@ export function cellInfoTitle(allConfirmed: boolean): string {
   return allConfirmed ? 'Cortes en esta área' : 'Reportes en esta área';
 }
 
+/**
+ * What the report form says when `POST /v1/reports` refuses. `code` is the Worker's
+ * error code; anything unknown (or a rate limit without a wait) keeps the generic line.
+ */
+export function reportRejection(code: string | undefined, retryAfterSeconds?: number): string {
+  if (code === 'intake_paused') return 'Por ahora no estamos recibiendo reportes. El mapa sigue funcionando.';
+  if (code === 'outside_pilot_zone') return 'Tu ubicación está fuera de los distritos que cubre el mapa. Aquí todavía no podemos recibir tu reporte.';
+  if (code === 'rate_limited' && typeof retryAfterSeconds === 'number' && retryAfterSeconds > 0) {
+    const minutes = Math.ceil(retryAfterSeconds / 60);
+    return `Enviaste varios reportes seguidos. Puedes intentarlo de nuevo en ${minutes === 1 ? 'aproximadamente 1 minuto' : `unos ${minutes} minutos`}.`;
+  }
+  return 'No pudimos enviar tu reporte ahora. Vuelve a intentarlo más tarde.';
+}
+
+/** Said next to a district the page picked from rough boxes, never one the visitor chose. */
+export const approximateDistrictLabel = 'Distrito aproximado';
+
 /** The promise made after sending must be one the map keeps, so it follows the status sent. */
 export function thanksMessage(status: string | undefined): string {
   return status === 'restored'
     ? 'Gracias. Si otros vecinos también avisan que volvió, el corte se cerrará en el mapa.'
     : 'Recibimos tu reporte. Aparecerá en el mapa como «sin confirmar» hasta que otros vecinos reporten lo mismo cerca de ti.';
 }
+
+/** The area dialog asks OpenStreetMap services for street names; this is what leaves the browser. */
+export const streetLookupNotice = 'Para las áreas confirmadas, tu navegador consulta servicios de OpenStreetMap (Overpass y Nominatim) para mostrar nombres de calles cercanas; solo les envía el área aproximada, no tu posición.';
 
 export const ownReportLabel = 'Tu reporte · sin confirmar';
 

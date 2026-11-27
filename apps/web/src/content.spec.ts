@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { cellInfoTitle, coverageList, emptyDistrictState, emptyMapState, locationSuccess, mapLabel, onboardingSteps, reportLocationError, siteNotice, thanksMessage, unofficialNotice } from './content.js';
+import { cellInfoTitle, coverageList, emptyDistrictState, emptyMapState, locationSuccess, mapLabel, onboardingSteps, reportLocationError, reportRejection, siteNotice, streetLookupNotice, thanksMessage, unofficialNotice } from './content.js';
 
 describe('answer copy', () => {
   it('titles a dialog with unconfirmed reports as reports, not outages', () => {
@@ -41,6 +41,42 @@ describe('report location errors', () => {
     expect(reportLocationError(2)).not.toContain('Permite');
     expect(reportLocationError(3)).toContain('Reintenta');
     expect(reportLocationError(3)).not.toContain('Permite');
+  });
+});
+
+describe('report rejections', () => {
+  const generic = 'No pudimos enviar tu reporte ahora. Vuelve a intentarlo más tarde.';
+
+  it('answers each Worker code with its own message', () => {
+    expect(reportRejection('intake_paused')).toBe('Por ahora no estamos recibiendo reportes. El mapa sigue funcionando.');
+    expect(reportRejection('outside_pilot_zone')).toContain('fuera de los distritos que cubre el mapa');
+  });
+
+  it('rounds the wait up to whole minutes', () => {
+    expect(reportRejection('rate_limited', 600)).toContain('en unos 10 minutos');
+    expect(reportRejection('rate_limited', 61)).toContain('en unos 2 minutos');
+    expect(reportRejection('rate_limited', 30)).toContain('aproximadamente 1 minuto');
+  });
+
+  it('keeps the generic message for other, unknown or incomplete answers', () => {
+    expect(reportRejection('report_unavailable')).toBe(generic);
+    expect(reportRejection(undefined)).toBe(generic);
+    expect(reportRejection('rate_limited')).toBe(generic);
+    expect(reportRejection('rate_limited', 0)).toBe(generic);
+  });
+
+  it('never uses the team words', () => {
+    for (const text of [reportRejection('intake_paused'), reportRejection('outside_pilot_zone'), reportRejection('rate_limited', 90), generic]) {
+      expect(text.toLowerCase()).not.toMatch(/piloto|zona/);
+    }
+  });
+});
+
+describe('street lookup disclosure', () => {
+  it('names the services and says the position is not what is sent', () => {
+    expect(streetLookupNotice).toContain('Overpass');
+    expect(streetLookupNotice).toContain('Nominatim');
+    expect(streetLookupNotice).toContain('no tu posición');
   });
 });
 

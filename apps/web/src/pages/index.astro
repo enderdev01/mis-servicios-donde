@@ -2,7 +2,7 @@
 import '@fontsource-variable/nunito/wght.css';
 import '@fontsource/comfortaa/700.css';
 import nunitoLatin from '@fontsource-variable/nunito/files/nunito-latin-wght-normal.woff2?url';
-import { mapLabel, onboardingSteps, siteNotice, unofficialNotice } from '../content.js';
+import { approximateDistrictLabel, mapLabel, onboardingSteps, siteNotice, streetLookupNotice, unofficialNotice } from '../content.js';
 
 const origin = Astro.site?.origin;
 const title = 'Mis Servicios | Mapa comunitario de cortes';
@@ -70,6 +70,7 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
       <header class="plate" id="site-identity" hidden>
         <p class="wordmark">Mis Servicios</p>
         <p class="unofficial" role="note">{siteNotice} {unofficialNotice}</p>
+        <p class="unofficial">{streetLookupNotice}</p>
         <button type="button" class="plate-link" id="replay-intro">Ver cómo funciona</button>
       </header>
     </div>
@@ -135,6 +136,7 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
                 <select id="district-filter" name="district">
                   <option value="all">Todos</option>
                 </select>
+                <small class="district-approx" id="district-approx" aria-hidden="true" hidden>{approximateDistrictLabel}</small>
               </label>
               <label class="filter">
                 <span>Ver servicio</span>
@@ -158,7 +160,7 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
         <section class="panel" id="report-panel" aria-labelledby="report-heading">
           <h2 id="report-heading" tabindex="-1">¿Se fue o volvió el servicio?</h2>
           <p class="fine" id="coverage-note" hidden></p>
-          <p class="fine">Al enviar el reporte, tu ubicación exacta se manda una sola vez: el servidor la convierte en una zona amplia y la descarta. No se guarda ni se muestra.</p>
+          <p class="fine">Tu ubicación exacta se manda una sola vez: el servidor la convierte en una zona amplia y la descarta.</p>
           <form id="report-form" novalidate>
             <fieldset>
               <legend>¿Qué servicio?</legend>
@@ -214,13 +216,13 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
       // the onboarding, the rail and the report form never wait for them.
       import type * as Leaflet from 'leaflet';
       import {
-        areaRows, basemap, boundaryContains, boundsOf, cellContainsPosition, cellInZone, countAreas, dedupeRows, defaultCenter, defaultZoom, describeCell, formatDistance,
-        isH3Loaded, leadAnswer, loadH3, loadingMessage, positionCell, providerLabel, providerOptions, serviceStyles, sortByProximity, summarizeCells, toCellBlobs, toPublicCells, toZones, zoneBounds,
+        areaRows, basemap, boundsOf, cellContainsPosition, cellInZone, countAreas, dedupeRows, defaultCenter, defaultZoom, describeCell, formatDistance,
+        isH3Loaded, leadAnswer, loadH3, loadingMessage, positionCell, providerLabel, providerOptions, serviceStyles, soleProvider, sortByProximity, summarizeCells, toCellBlobs, toPublicCells, toZones, zoneAt, zoneBounds,
         type NearbyCell, type Provider, type PublicCell, type Service, type ZoneSummary,
       } from '../map.js';
       import { ONBOARDING_STORAGE_KEY, persistOnboardingStatus, shouldShowOnboarding } from '../onboarding.js';
       import {
-        cellInfoTitle, coverageList, emptyDistrictState, emptyMapState, mapControlLabels, onboardingSteps, locationSuccess, outsideCoverageAnswer, ownReportLabel, reportCopy, reportLocationError, siteNotice, thanksMessage, unofficialNotice,
+        cellInfoTitle, coverageList, emptyDistrictState, emptyMapState, mapControlLabels, onboardingSteps, locationSuccess, outsideCoverageAnswer, ownReportLabel, reportCopy, reportLocationError, reportRejection, siteNotice, thanksMessage, unofficialNotice,
       } from '../content.js';
       import { settleSheet, type SheetState } from '../sheet.js';
       import { formatFreshness } from '../freshness.js';
@@ -236,6 +238,7 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
 
       const $ = <T extends Element>(selector: string): T | null => document.querySelector<T>(selector);
       const districtFilter = $<HTMLSelectElement>('#district-filter');
+      const districtApprox = $<HTMLElement>('#district-approx');
       const filter = $<HTMLSelectElement>('#service-filter');
       const providerFilter = $<HTMLSelectElement>('#provider-filter');
       const mapState = $<HTMLElement>('#map-state');
@@ -279,6 +282,8 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
       let meMarker: Leaflet.Marker | undefined;
       let zones: ZoneSummary[] = [];
       let myDistrictSlug: string | undefined;
+      /** The district filter shows the page's guess (from rough boxes), not a choice the visitor made. */
+      let districtAuto = false;
       /** The visitor's position is known and sits outside every covered district. */
       let outsideCoverage = false;
       let sending = false;
@@ -329,7 +334,7 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
         if (origin) {
           // The position can be known before the map has loaded: nothing to fly yet, and no new prompt.
           if (!map) return;
-          if (myDistrictSlug && districtFilter) districtFilter.value = myDistrictSlug;
+          if (myDistrictSlug && districtFilter) { districtFilter.value = myDistrictSlug; districtAuto = true; syncDistrictNote(); }
           // Re-centering is a personal action: fitting the whole district makes
           // the visitor's own position look remote again.
           focusPoint(origin, Math.max(map.getZoom(), 16), true);
@@ -341,9 +346,13 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
       /** Room the panel over the map takes: the side rail from 56rem, the peeking sheet below it. */
       function mapInset(): { paddingTopLeft: [number, number]; paddingBottomRight: [number, number] } {
         if (matchMedia('(min-width: 56rem)').matches && rail) return { paddingTopLeft: [rail.offsetWidth + 48, 48], paddingBottomRight: [48, 48] };
-        // 9.6rem is the visible part of the sheet in `peek` (see `.rail[data-state='peek']`).
-        const peek = parseFloat(getComputedStyle(document.documentElement).fontSize) * 9.6;
-        return { paddingTopLeft: [24, 72], paddingBottomRight: [24, peek + 24] };
+        return { paddingTopLeft: [24, 72], paddingBottomRight: [24, peekHeight() + 24] };
+      }
+
+      /** Visible part of the sheet in `peek`, in px: the `--peek` custom property (in rem) is the single source. */
+      function peekHeight(): number {
+        const root = getComputedStyle(document.documentElement);
+        return parseFloat(root.getPropertyValue('--peek')) * parseFloat(root.fontSize);
       }
 
       /** Puts a point in the middle of what is visible, not of the whole map element. */
@@ -443,6 +452,7 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
           }
           const retained = previous.get(service);
           if (retained && providerOptions[service].some((option) => option.id === retained)) select.value = retained;
+          else select.value = soleProvider(service) ?? '';
           label.append(text, select);
           providerFields.append(label);
         }
@@ -672,7 +682,7 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
             const district = zones.find((zone) => zone.slug === currentDistrict())?.name ?? '';
             mapState.textContent = emptyDistrictState(district, elsewhere);
             actions.push(
-              stateButton('empty-cta', 'Ver todos los distritos', () => { if (districtFilter) districtFilter.value = 'all'; render(); }),
+              stateButton('empty-cta', 'Ver todos los distritos', () => { if (districtFilter) districtFilter.value = 'all'; syncDistrictNote(); render(); }),
               stateButton('empty-cta', 'Reportar un corte', goToReport),
             );
           } else if (fetchedCells.length > 0) {
@@ -825,13 +835,23 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
         populateDistrictFilter();
         const here = origin;
         if (here) {
-          myDistrictSlug = zones.find((zone) => boundaryContains(zone.boundary, here[0], here[1]))?.slug;
-          if (myDistrictSlug && districtFilter && districtFilter.value === 'all') districtFilter.value = myDistrictSlug;
+          myDistrictSlug = zoneAt(zones, here[0], here[1])?.slug;
+          if (myDistrictSlug && districtFilter && districtFilter.value === 'all') { districtFilter.value = myDistrictSlug; districtAuto = true; }
         }
+        syncDistrictNote();
         updateCoverage();
         // The district names belong in the empty state, but never before the first answer: that would read as "nothing reported".
         if (here || lastLoadedAt !== undefined) render(false);
         if (here) centreOnMe();
+      }
+
+      /** «Distrito aproximado» shows only while the selected district is the page's own pick. */
+      function syncDistrictNote(): void {
+        if (!districtApprox || !districtFilter) return;
+        districtApprox.hidden = !(districtAuto && myDistrictSlug !== undefined && districtFilter.value === myDistrictSlug);
+        // Described, not named: the select keeps «Ver distrito» as its accessible name.
+        if (districtApprox.hidden) districtFilter.removeAttribute('aria-describedby');
+        else districtFilter.setAttribute('aria-describedby', 'district-approx');
       }
 
       function populateDistrictFilter(): void {
@@ -863,8 +883,9 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
         navigator.geolocation.getCurrentPosition(
           (position) => {
             origin = [position.coords.latitude, position.coords.longitude];
-            myDistrictSlug = zones.find((zone) => boundaryContains(zone.boundary, position.coords.latitude, position.coords.longitude))?.slug;
-            if (myDistrictSlug && districtFilter) districtFilter.value = myDistrictSlug;
+            myDistrictSlug = zoneAt(zones, position.coords.latitude, position.coords.longitude)?.slug;
+            if (myDistrictSlug && districtFilter) { districtFilter.value = myDistrictSlug; districtAuto = true; }
+            syncDistrictNote();
             updateCoverage();
             locate?.setAttribute('hidden', '');
             locate?.removeAttribute('data-busy');
@@ -1015,8 +1036,7 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
         let dragged = false;
         grip.addEventListener('pointerdown', (event) => {
           if (!narrow.matches || !event.isPrimary || event.button !== 0) return;
-          const peekHeight = 9.6 * parseFloat(getComputedStyle(document.documentElement).fontSize);
-          const travel = Math.max(rail.offsetHeight - peekHeight, 0);
+          const travel = Math.max(rail.offsetHeight - peekHeight(), 0);
           drag = { startY: event.clientY, startAt: event.timeStamp, from: rail.dataset.state === 'open' ? 0 : travel, travel, moved: false };
           dragged = false;
           grip.setPointerCapture(event.pointerId);
@@ -1484,7 +1504,7 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
       }
       filter?.addEventListener('change', () => { populateProviderFilter(); render(); });
       providerFilter?.addEventListener('change', () => render());
-      districtFilter?.addEventListener('change', () => render());
+      districtFilter?.addEventListener('change', () => { districtAuto = false; syncDistrictNote(); render(); });
       reportForm?.querySelectorAll<HTMLInputElement>('input[name="services"]').forEach((input) => input.addEventListener('change', renderProviderFields));
       void loadZones();
       void loadCells();
@@ -1562,7 +1582,8 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
             } else if (response.status === 409) {
               say('warn', 'Ya enviaste este reporte hace menos de una hora. Podrás repetirlo más tarde.');
             } else {
-              say('error', 'No pudimos enviar tu reporte ahora. Vuelve a intentarlo más tarde.');
+              const body = await response.json().catch(() => undefined) as { code?: unknown; retryAfterSeconds?: unknown } | undefined;
+              say('error', reportRejection(typeof body?.code === 'string' ? body.code : undefined, typeof body?.retryAfterSeconds === 'number' ? body.retryAfterSeconds : undefined));
             }
           } catch (error) {
             say('error', isTimeout(error) ? reportCopy.timeout : 'No pudimos enviar tu reporte. Revisa tu conexión e inténtalo de nuevo.');
@@ -1584,8 +1605,9 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
        */
       function showReportLanding(here: [number, number], status: string | undefined): void {
         origin = here;
-        myDistrictSlug = zones.find((zone) => boundaryContains(zone.boundary, here[0], here[1]))?.slug;
-        if (myDistrictSlug && districtFilter) districtFilter.value = myDistrictSlug;
+        myDistrictSlug = zoneAt(zones, here[0], here[1])?.slug;
+        if (myDistrictSlug && districtFilter) { districtFilter.value = myDistrictSlug; districtAuto = true; }
+        syncDistrictNote();
         if (status === 'outage' && isH3Loaded()) {
           try { addOwnCell(sessionStore, positionCell(here, fetchedCells[0]?.h3Cell)); } catch { /* the area is simply not marked as theirs */ }
         }
@@ -1620,6 +1642,8 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
 
     <style is:global>
       :root {
+        /* Visible part of the mobile sheet in `peek`: the rail transform, the attribution offset and `peekHeight()` all read it. In rem. */
+        --peek: 8.2rem;
         --ground: #EFF2EC;
         --surface: #FBFCF9;
         --ink: #16201A;
@@ -2052,7 +2076,7 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
         box-shadow: 0 -10px 34px rgb(22 32 26 / .16);
         transition: transform .28s cubic-bezier(.32, .72, 0, 1);
       }
-      .rail[data-state='peek'] { transform: translateY(calc(100% - 9.6rem)); }
+      .rail[data-state='peek'] { transform: translateY(calc(100% - var(--peek))); }
       .rail[data-state='open'] { transform: translateY(0); }
 
       .grip {
@@ -2188,10 +2212,11 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
 
       .filters { display: grid; grid-template-columns: 1fr 1fr; gap: .55rem; margin-bottom: .55rem; }
       .filter { display: grid; gap: .25rem; }
-      .filter span { color: var(--muted); font-size: .74rem; }
+      .filter span, .filter small { color: var(--muted); font-size: .74rem; }
+      .filter small[hidden] { display: none; }
       select {
         /* At least 16px: iOS Safari zooms the page when a smaller control takes focus. */
-        font: inherit; font-size: max(1rem, 1em); padding: .35rem 1.9rem .35rem .6rem; color: var(--ink);
+        font: inherit; font-size: max(1rem, 1em); min-height: 44px; padding: .35rem 1.9rem .35rem .6rem; color: var(--ink);
         background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2354655B' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right .45rem center / 14px;
         border: 1px solid var(--control-line); border-radius: var(--r-sm); appearance: none; cursor: pointer;
       }
@@ -2233,7 +2258,7 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
       legend { padding: 0; margin-bottom: .45rem; color: var(--muted); font-size: .78rem; }
       .choices { display: flex; flex-wrap: wrap; gap: .4rem; }
       .choices label {
-        display: inline-flex; align-items: center; gap: .45rem; padding: .45rem .75rem;
+        display: inline-flex; align-items: center; gap: .45rem; min-height: 44px; padding: .45rem .75rem;
         border: 1px solid var(--control-line); border-radius: 99px; background: #fff; font-size: .87rem; cursor: pointer;
         transition: border-color .18s ease, background-color .18s ease;
       }
@@ -2241,7 +2266,7 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
       .choices label:has(input:checked) { border-color: var(--agua); background: #E8F4FB; }
 
       #submit {
-        width: 100%; padding: .78rem; font: inherit; font-weight: 800; font-size: .95rem;
+        width: 100%; min-height: 44px; padding: .78rem; font: inherit; font-weight: 800; font-size: .95rem;
         color: #fff; background: var(--ink); border: 0; border-radius: var(--r-md); cursor: pointer;
         transition: transform .18s cubic-bezier(.16, 1, .3, 1), background-color .18s ease;
       }
@@ -2257,7 +2282,17 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
       #report-state[data-tone='success'] { background: #EAF6EC; color: #1A7A3A; border-color: #C2E7C8; font-weight: 700; }
 
       @media (max-width: 55.99rem) {
-        .leaflet-container .leaflet-bottom { bottom: 9.6rem; }
+        .leaflet-container .leaflet-bottom { bottom: var(--peek); }
+        /*
+         * Open, the sheet reaches up to 86dvh and left only ~118px of map at 390x844:
+         * not enough for the stacked zoom pair plus the locate control, which sank under it.
+         * The controls go in one row (about 44px tall) so they stay in the strip above the
+         * sheet. No transition: the sheet already animates, and reduced motion has nothing to drop.
+         */
+        .rail[data-state='open'] ~ .garden .leaflet-top.leaflet-right { display: flex; align-items: flex-start; }
+        .rail[data-state='open'] ~ .garden .leaflet-control-zoom { display: flex; }
+        .rail[data-state='open'] ~ .garden .leaflet-control-zoom a { border-bottom: 0; }
+        .rail[data-state='open'] ~ .garden .leaflet-control-zoom a + a { border-left: 1px solid var(--control-line); }
         /* Open, the sheet needs its height for the panel: at 200% text a 5-line answer ate ~400px. The full text is in the list. */
         .rail[data-state='open'] .answer {
           display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;

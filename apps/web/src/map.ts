@@ -81,6 +81,12 @@ export const providerOptions: Record<Service, ProviderOption[]> = {
   ],
 };
 
+/** The one named company of a service («Otra / No sé» does not count), so the form can preselect it. */
+export function soleProvider(service: Service): Provider | undefined {
+  const named = providerOptions[service].filter((option) => option.id !== 'other');
+  return named.length === 1 ? named[0]?.id : undefined;
+}
+
 /** Lima Metropolitana, the pilot area, shown until reported cells arrive. */
 export const defaultCenter: [number, number] = [-12.0464, -77.0428];
 export const defaultZoom = 13;
@@ -312,6 +318,20 @@ export function zoneBounds(boundary: ZoneBoundary): [[number, number], [number, 
 
 export function boundaryContains(boundary: ZoneBoundary, latitude: number, longitude: number): boolean {
   return latitude >= boundary.minLatitude && latitude <= boundary.maxLatitude && longitude >= boundary.minLongitude && longitude <= boundary.maxLongitude;
+}
+
+/**
+ * District boxes overlap, so «contains the point» is not unique: the nearest box
+ * centre wins (ties keep list order). Boxes are rough, hence the caller's «aproximado».
+ */
+export function zoneAt(zones: ZoneSummary[], latitude: number, longitude: number): ZoneSummary | undefined {
+  const distance = ({ boundary: b }: ZoneSummary): number =>
+    Math.hypot((b.minLatitude + b.maxLatitude) / 2 - latitude, (b.minLongitude + b.maxLongitude) / 2 - longitude);
+  let best: ZoneSummary | undefined;
+  for (const zone of zones) {
+    if (boundaryContains(zone.boundary, latitude, longitude) && (!best || distance(zone) < distance(best))) best = zone;
+  }
+  return best;
 }
 
 export function cellInZone(h3Cell: string, boundary: ZoneBoundary): boolean {

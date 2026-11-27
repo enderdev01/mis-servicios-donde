@@ -98,4 +98,4 @@ Empty, loading, denied-location, invalid-report, submitted, pending, provider-er
 - The raw H3 index never appears as text; an invalid index is dropped rather than mapped.
 - A report count is never exposed — only `confirmed` vs not. Exact per-cell counts would let a caller fingerprint neighbours.
 - The unofficial framing is present in every state: the collapsed identity control always reads "No oficial", and the notice it expands names Sedapal and Luz del Sur. Neither the control nor the panel ever auto-hides.
-- OSM attribution stays visible; on mobile `.leaflet-bottom` lifts `9.6rem` to clear the peek sheet.
+- OSM attribution stays visible; on mobile `.leaflet-bottom` lifts by `--peek` (`8.2rem`, the visible part of the peek sheet, shared with the rail transform and `mapInset()`) to clear it.
