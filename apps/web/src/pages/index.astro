@@ -172,15 +172,26 @@ import { siteNotice, unofficialNotice } from '../content.js';
     </dialog>
 
     <script>
-      import L from 'leaflet';
-      import 'leaflet/dist/leaflet.css';
+      // Leaflet and h3-js are loaded after the first paint (see `loadMapRuntime`):
+      // the onboarding, the rail and the report form never wait for them.
+      import type * as Leaflet from 'leaflet';
       import {
         basemap, boundaryContains, boundsOf, cellCenter, cellContainsPosition, cellInZone, defaultCenter, defaultZoom, describeCell, formatDistance,
-        leadAnswer, loadingMessage, providerLabel, providerOptions, serviceStyles, sortByProximity, summarizeCells, toCellBlobs, toPublicCells, zoneBounds,
+        isH3Loaded, leadAnswer, loadH3, loadingMessage, providerLabel, providerOptions, serviceStyles, sortByProximity, summarizeCells, toCellBlobs, toPublicCells, toZones, zoneBounds,
         type NearbyCell, type Provider, type PublicCell, type Service, type ZoneSummary,
       } from '../map.js';
       import { ONBOARDING_STORAGE_KEY, persistOnboardingStatus, shouldShowOnboarding } from '../onboarding.js';
-      import { onboardingSteps, locationSuccess, siteNotice, unofficialNotice } from '../content.js';
+      import { onboardingSteps, locationSuccess, reportCopy, reportLocationError, siteNotice, unofficialNotice } from '../content.js';
+      import { formatFreshness } from '../freshness.js';
+      import { startPolling } from '../polling.js';
+      import { createSubmissionIds, fetchWithDeadline, isTimeout } from '../request.js';
+      import { createSafeStorage, getDeviceId, readCells, saveCells } from '../storage.js';
+
+      // Tells public/boot-watchdog.js (added on another branch) that the app script is running.
+      document.documentElement.dataset.appBooted = '1';
+
+      type LeafletModule = typeof Leaflet;
+      let L!: LeafletModule;
 
       const $ = <T extends Element>(selector: string): T | null => document.querySelector<T>(selector);
       const districtFilter = $<HTMLSelectElement>('#district-filter');
@@ -206,24 +217,22 @@ import { siteNotice, unofficialNotice } from '../content.js';
       const cellInfoClose = $<HTMLButtonElement>('#cell-info-close');
       const providerFields = $<HTMLDivElement>('#provider-fields');
       const submit = $<HTMLButtonElement>('#submit');
-      const deviceId = (() => {
-        const key = 'mis-servicios:device-id';
-        const existing = localStorage.getItem(key);
-        if (existing) return existing;
-        const fresh = crypto.randomUUID();
-        localStorage.setItem(key, fresh);
-        return fresh;
-      })();
+      // A blocked localStorage must not take the app down: every access goes through this guard.
+      const storage = createSafeStorage();
+      const deviceId = getDeviceId(storage);
+      const submissionIds = createSubmissionIds();
 
-      let map: L.Map | undefined;
-      let cellLayer: L.LayerGroup | undefined;
+      let map: Leaflet.Map | undefined;
+      let cellLayer: Leaflet.LayerGroup | undefined;
       let origin: [number, number] | undefined;
-      let meMarker: L.Marker | undefined;
+      let meMarker: Leaflet.Marker | undefined;
       let zones: ZoneSummary[] = [];
       let myDistrictSlug: string | undefined;
       let painted: NearbyCell[] = [];
       let fetchedCells: PublicCell[] = [];
       let loadFailed = false;
+      /** Client time of the last good `/v1/cells` response (or of the saved copy shown instead). */
+      let lastLoadedAt: number | undefined;
       let streetLookup = 0;
 
       const icons: Record<Service, string> = {
@@ -239,7 +248,7 @@ import { siteNotice, unofficialNotice } from '../content.js';
       const locateGlyph = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.4"/><path d="M12 2.6v3M12 18.4v3M2.6 12h3M18.4 12h3"/></svg>';
 
       /** Always offered, not only after a denial: "where am I" is the second question. */
-      function addLocateControl(instance: L.Map): void {
+      function addLocateControl(instance: Leaflet.Map): void {
         const Locate = L.Control.extend({
           onAdd(): HTMLElement {
             const button = L.DomUtil.create('button', 'locate-control');
@@ -263,7 +272,9 @@ import { siteNotice, unofficialNotice } from '../content.js';
       }
 
       function centreOnMe(): void {
-        if (origin && map) {
+        if (origin) {
+          // The position can be known before the map has loaded: nothing to fly yet, and no new prompt.
+          if (!map) return;
           if (myDistrictSlug && districtFilter) districtFilter.value = myDistrictSlug;
           // Re-centering is a personal action: fitting the whole district makes
           // the visitor's own position look remote again.
@@ -271,6 +282,31 @@ import { siteNotice, unofficialNotice } from '../content.js';
           return;
         }
         askPosition();
+      }
+
+      /**
+       * Leaflet and h3-js arrive after the first paint. The list needs h3 (areas,
+       * distances), the map needs Leaflet; each one renders as soon as it is there.
+       */
+      async function loadMapRuntime(): Promise<void> {
+        try {
+          const [leaflet] = await Promise.all([import('leaflet'), import('leaflet/dist/leaflet.css')]);
+          L = leaflet.default;
+          startMap();
+          render();
+          if (origin) centreOnMe();
+        } catch {
+          if (mapState && lastLoadedAt === undefined && !loadFailed) mapState.textContent = reportCopy.mapFailed;
+        }
+      }
+
+      async function loadH3Runtime(): Promise<void> {
+        try {
+          await loadH3();
+          render();
+        } catch {
+          if (mapState && !loadFailed) mapState.textContent = reportCopy.mapFailed;
+        }
       }
 
       /** A tile or WebGL failure must never take the textual panel down with it. */
@@ -500,15 +536,22 @@ import { siteNotice, unofficialNotice } from '../content.js';
         if (!cellList || !mapState) return;
         cellList.replaceChildren();
         mapState.removeAttribute('data-tone');
-        if (loadFailed) {
+        if (loadFailed && lastLoadedAt === undefined) {
           // A failed load must never read as "no outages": say so, and offer the retry.
-          if (answer) answer.textContent = 'No pudimos cargar los cortes. Revisa tu conexión.';
+          // Nothing was ever loaded, so there is nothing on screen that could be out of date.
+          if (answer) answer.textContent = reportCopy.loadFailed;
           mapState.dataset.tone = 'error';
-          mapState.textContent = 'No pudimos cargar los cortes ahora. Lo que ves puede no estar al día.';
+          mapState.textContent = reportCopy.loadFailedState;
           mapState.append(stateButton('retry', 'Reintentar', () => { void loadCells(); }));
         } else {
           if (answer) answer.textContent = leadAnswer(cells);
-          if (cells.length > 0) {
+          let action: HTMLButtonElement | undefined;
+          if (loadFailed) {
+            // The last good data stays on screen; only the message says it may be behind.
+            mapState.dataset.tone = 'error';
+            mapState.textContent = reportCopy.stale;
+            action = stateButton('retry', 'Reintentar', () => { void loadCells(); });
+          } else if (cells.length > 0) {
             const confirmedCount = cells.filter((cell) => cell.confirmed).length;
             mapState.textContent = summarizeCells(confirmedCount, cells.length - confirmedCount);
           } else if (fetchedCells.length > 0) {
@@ -516,8 +559,15 @@ import { siteNotice, unofficialNotice } from '../content.js';
           } else {
             const district = zones.find((zone) => zone.slug === currentDistrict())?.name ?? 'la zona piloto';
             mapState.textContent = `Nadie ha reportado cortes en ${district}. Si se fue el servicio en tu casa, repórtalo: así sabrás si es solo tu casa.`;
-            mapState.append(stateButton('empty-cta', 'Reportar un corte', goToReport));
+            action = stateButton('empty-cta', 'Reportar un corte', goToReport);
           }
+          if (lastLoadedAt !== undefined) {
+            const freshness = document.createElement('span');
+            freshness.dataset.freshness = '';
+            freshness.textContent = ` ${formatFreshness(lastLoadedAt, Date.now())}.`;
+            mapState.append(freshness);
+          }
+          if (action) mapState.append(action);
         }
         for (const row of listRows(cells)) {
           const item = document.createElement('li');
@@ -537,20 +587,36 @@ import { siteNotice, unofficialNotice } from '../content.js';
       }
 
       async function loadCells(silent = false): Promise<void> {
-        if (!filter || !mapState) return;
-        const suffix = filter.value === 'all' ? '' : `?service=${encodeURIComponent(filter.value)}`;
+        if (!mapState) return;
         if (!silent) mapState.textContent = loadingMessage;
+        // Always the full list: the service filter narrows it in the browser, so a
+        // filter change never costs a round trip or a chance to fail.
+        const previous = JSON.stringify(fetchedCells);
+        const wasFailed = loadFailed;
         try {
-          const response = await fetch(`/v1/cells${suffix}`);
+          const response = await fetchWithDeadline('/v1/cells');
           if (!response.ok) throw new Error('cells_unavailable');
           fetchedCells = toPublicCells(await response.json());
           loadFailed = false;
+          lastLoadedAt = Date.now();
+          saveCells(storage, fetchedCells, lastLoadedAt);
         } catch {
           loadFailed = true;
-          // A background refresh keeps what the visitor already has; an explicit load has nothing to show.
-          if (!silent) fetchedCells = [];
+          // Never wipe what the visitor already has. With nothing loaded yet, the
+          // last saved copy (if still fresh enough) beats an empty screen.
+          if (lastLoadedAt === undefined) {
+            const saved = readCells(storage, Date.now());
+            if (saved) { fetchedCells = saved.cells; lastLoadedAt = saved.at; }
+          }
         }
+        // A quiet refresh with nothing new only moves the clock: rebuilding the list would drop keyboard focus.
+        if (silent && !loadFailed && !wasFailed && previous === JSON.stringify(fetchedCells)) { updateFreshness(); return; }
         render(!silent);
+      }
+
+      function updateFreshness(): void {
+        const label = mapState?.querySelector('[data-freshness]');
+        if (label && lastLoadedAt !== undefined) label.textContent = ` ${formatFreshness(lastLoadedAt, Date.now())}.`;
       }
 
       function currentDistrict(): string {
@@ -588,9 +654,16 @@ import { siteNotice, unofficialNotice } from '../content.js';
         } else if (origin) map.setView(origin, 15);
       }
 
+      function filterByService(cells: NearbyCell[]): NearbyCell[] {
+        const selected = filter?.value ?? 'all';
+        return selected === 'all' ? cells : cells.filter((cell) => cell.service === selected);
+      }
+
       function render(center = true): void {
+        // Areas and distances need h3-js; until it arrives only an empty result can be drawn.
+        if (!isH3Loaded() && fetchedCells.length > 0) return;
         const ordered = sortByProximity(fetchedCells, origin);
-        const filtered = filterByProvider(filterByDistrict(ordered));
+        const filtered = filterByProvider(filterByDistrict(filterByService(ordered)));
         renderList(filtered);
         renderCells(filtered);
         if (center) applyDistrict();
@@ -598,8 +671,8 @@ import { siteNotice, unofficialNotice } from '../content.js';
 
       async function loadZones(): Promise<void> {
         try {
-          const response = await fetch('/v1/zones');
-          if (response.ok) zones = (await response.json()) as ZoneSummary[];
+          const response = await fetchWithDeadline('/v1/zones');
+          if (response.ok) zones = toZones(await response.json());
         } catch { zones = []; }
         populateDistrictFilter();
         const here = origin;
@@ -645,6 +718,8 @@ import { siteNotice, unofficialNotice } from '../content.js';
             locate?.setAttribute('hidden', '');
             locate?.removeAttribute('data-busy');
             onSuccess?.();
+            // Distances change with the new position even when the data did not.
+            render(false);
             void loadCells(true).then(centreOnMe);
           },
           () => { locate?.removeAttribute('data-busy'); locate?.removeAttribute('hidden'); onError?.(); },
@@ -1158,7 +1233,6 @@ import { siteNotice, unofficialNotice } from '../content.js';
         document.addEventListener('keydown', onboardingEscape);
       }
 
-      startMap();
       renderLegend();
       populateProviderFilter();
       renderProviderFields();
@@ -1182,13 +1256,18 @@ import { siteNotice, unofficialNotice } from '../content.js';
 
       grip?.addEventListener('click', () => setRail(rail?.getAttribute('data-state') === 'open' ? 'peek' : 'open'));
       locate?.addEventListener('click', () => askPosition());
-      filter?.addEventListener('change', () => { populateProviderFilter(); void loadCells(); });
+      filter?.addEventListener('change', () => { populateProviderFilter(); render(); });
       providerFilter?.addEventListener('change', () => render());
       districtFilter?.addEventListener('change', () => render());
       reportForm?.querySelectorAll<HTMLInputElement>('input[name="services"]').forEach((input) => input.addEventListener('change', renderProviderFields));
       void loadZones();
       void loadCells();
       startOnboarding();
+      void loadH3Runtime();
+      void loadMapRuntime();
+      // The list refreshes itself while the tab is visible; coming back online retries at once.
+      startPolling(() => loadCells(true));
+      window.addEventListener('online', () => { void loadCells(true); });
 
       reportForm?.addEventListener('submit', (event) => {
         event.preventDefault();
@@ -1224,11 +1303,15 @@ import { siteNotice, unofficialNotice } from '../content.js';
           reportState.textContent = 'Enviando tu reporte…';
           try {
             const status = reportForm.querySelector<HTMLInputElement>('input[name="status"]:checked')?.value;
-            const response = await fetch('/v1/reports', {
+            // A retry after a lost response reuses the id, so the server can recognise it as the same report.
+            const submissionId = submissionIds.idFor(JSON.stringify({ services, providers, status }));
+            const response = await fetchWithDeadline('/v1/reports', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ submissionId: crypto.randomUUID(), deviceId, services, providers, status, latitude: position.coords.latitude, longitude: position.coords.longitude }),
+              body: JSON.stringify({ submissionId, deviceId, services, providers, status, latitude: position.coords.latitude, longitude: position.coords.longitude }),
             });
+            // Any HTTP answer settles this report: the next one is a new submission.
+            submissionIds.settle();
             if (response.ok) {
               reportState.dataset.tone = 'success';
               reportState.textContent = '';
@@ -1243,14 +1326,17 @@ import { siteNotice, unofficialNotice } from '../content.js';
               reportState.dataset.tone = 'error';
               reportState.textContent = 'No pudimos enviar tu reporte ahora. Vuelve a intentarlo más tarde.';
             }
-          } catch {
+          } catch (error) {
             reportState.dataset.tone = 'error';
-            reportState.textContent = 'No pudimos enviar tu reporte. Revisa tu conexión e inténtalo de nuevo.';
+            reportState.textContent = isTimeout(error) ? reportCopy.timeout : 'No pudimos enviar tu reporte. Revisa tu conexión e inténtalo de nuevo.';
           } finally {
             submit.disabled = false;
             submit.textContent = 'Enviar reporte';
           }
-        }, () => { reportState.dataset.tone = 'error'; reportState.textContent = 'Para enviar el reporte necesitamos tu ubicación una sola vez. Permite la ubicación para este sitio en tu navegador y vuelve a enviarlo.'; });
+        }, (error) => {
+          reportState.dataset.tone = 'error';
+          reportState.textContent = reportLocationError(error.code);
+        }, { timeout: 10_000, maximumAge: 60_000 });
       });
       // A chosen company clears its own error mark.
       providerFields?.addEventListener('change', (event) => {

@@ -1,4 +1,22 @@
-import { areNeighborCells, cellToLatLng, getResolution, isValidCell, latLngToCell } from 'h3-js';
+type H3 = typeof import('h3-js');
+
+// h3-js is an emscripten port: loaded on demand so the first paint, the
+// onboarding and the rail never wait for it. Everything below that needs it
+// throws until `loadH3()` has resolved.
+let h3: H3 | undefined;
+
+export async function loadH3(): Promise<void> {
+  h3 ??= await import('h3-js');
+}
+
+export function isH3Loaded(): boolean {
+  return h3 !== undefined;
+}
+
+function requireH3(): H3 {
+  if (!h3) throw new Error('h3_not_loaded');
+  return h3;
+}
 
 export type Service = 'water' | 'electricity' | 'internet';
 export type Provider = 'sedapal' | 'luz_del_sur' | 'pluz' | 'movistar' | 'claro' | 'win' | 'wow' | 'mifibra' | 'other';
@@ -116,6 +134,21 @@ const cellFootprintRadiusMetres = 120;
  * a report in an adjacent cell expands the geographic footprint.
  */
 export function toCellBlobs(cells: PublicCell[]): CellBlob[] {
+  // The clustering is quadratic in neighbour checks and every filter change asks
+  // for it several times over the same cells: one entry per distinct input.
+  const key = cells.map((cell) => `${cell.service}|${cell.provider}|${cell.h3Cell}|${cell.confirmed ? 1 : 0}`).join(',');
+  const cached = blobCache.get(key);
+  if (cached) return cached;
+  const blobs = clusterCells(cells);
+  if (blobCache.size >= blobCacheLimit) blobCache.delete(blobCache.keys().next().value as string);
+  blobCache.set(key, blobs);
+  return blobs;
+}
+
+const blobCache = new Map<string, CellBlob[]>();
+const blobCacheLimit = 32;
+
+function clusterCells(cells: PublicCell[]): CellBlob[] {
   const valid = cells.flatMap((cell) => {
     const centre = cellCenter(cell.h3Cell);
     return centre ? [{ cell, centre }] : [];
@@ -166,7 +199,7 @@ export function toCellBlobs(cells: PublicCell[]): CellBlob[] {
 function cellsTouch(first: string, second: string): boolean {
   if (first === second) return true;
   try {
-    return areNeighborCells(first, second);
+    return requireH3().areNeighborCells(first, second);
   } catch {
     return false;
   }
@@ -208,12 +241,14 @@ export function summarizeCells(confirmed: number, pending: number): string {
 }
 
 export function cellCenter(h3Cell: string): [number, number] | undefined {
-  return isValidCell(h3Cell) ? cellToLatLng(h3Cell) : undefined;
+  const lib = requireH3();
+  return lib.isValidCell(h3Cell) ? lib.cellToLatLng(h3Cell) : undefined;
 }
 
 /** Checks the visitor's position locally without sending it to the API. */
 export function cellContainsPosition(h3Cell: string, position: [number, number]): boolean {
-  return isValidCell(h3Cell) && latLngToCell(position[0], position[1], getResolution(h3Cell)) === h3Cell;
+  const lib = requireH3();
+  return lib.isValidCell(h3Cell) && lib.latLngToCell(position[0], position[1], lib.getResolution(h3Cell)) === h3Cell;
 }
 
 const earthRadiusMetres = 6_371_000;
@@ -232,8 +267,10 @@ export function distanceMetres(from: [number, number], to: [number, number]): nu
 /** Reads the way a neighbour says it: metres up close, one decimal past a kilometre. */
 export function formatDistance(metres: number): string {
   if (metres < 950) return `a ${(Math.round(metres / 10) * 10).toString()} m`;
-  return `a ${(metres / 1000).toFixed(1).replace('.', ',')} km`;
+  return `a ${kilometres.format(metres / 1000)} km`;
 }
+
+const kilometres = new Intl.NumberFormat('es-PE', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
 export interface NearbyCell extends PublicCell {
   metres?: number;
@@ -250,6 +287,19 @@ export interface ZoneSummary {
   slug: string;
   name: string;
   boundary: ZoneBoundary;
+}
+
+/** Same boundary rule as `toPublicCells`: a proxy error page with a 200 must not reach the district filter. */
+export function toZones(value: unknown): ZoneSummary[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry: unknown) => {
+    if (typeof entry !== 'object' || entry === null) return [];
+    const { slug, name, boundary } = entry as Record<string, unknown>;
+    if (typeof slug !== 'string' || typeof name !== 'string' || typeof boundary !== 'object' || boundary === null) return [];
+    const { minLatitude, maxLatitude, minLongitude, maxLongitude } = boundary as Record<string, unknown>;
+    if (![minLatitude, maxLatitude, minLongitude, maxLongitude].every((number) => typeof number === 'number' && Number.isFinite(number))) return [];
+    return [{ slug, name, boundary: { minLatitude, maxLatitude, minLongitude, maxLongitude } as ZoneBoundary }];
+  });
 }
 
 /** A district box as a Leaflet-ready south-west / north-east pair. */

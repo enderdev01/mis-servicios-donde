@@ -10,15 +10,19 @@ test('serves the static public foundation', async ({ request }) => {
 test('offers an unofficial filtered map and accessible report validation', async ({ page }) => {
   // Returning-user state: this spec exercises the map and panel, not the first run.
   await asReturningVisitor(page);
-  await page.route('**/v1/cells', (route) => route.fulfill({ json: [] }));
-  await page.route('**/v1/cells?service=water', (route) => route.fulfill({ json: [{ h3Cell: '8999999999fffff', service: 'water', provider: 'sedapal', confirmed: true, reports: 3 }] }));
+  // The service filter narrows one full response in the browser: no per-service request exists.
+  await page.route('**/v1/cells', (route) => route.fulfill({ json: [{ h3Cell: '8999999999fffff', service: 'water', provider: 'sedapal', confirmed: true, reports: 3 }] }));
   await page.goto('/');
 
   await expect(page.getByRole('heading', { name: '¿Es solo tu casa?' })).toBeVisible();
   await revealNotice(page);
   await expect(page.getByRole('note')).toContainText('No es un canal oficial de Sedapal, Luz del Sur ni de ningún proveedor.');
   await expect(page.getByLabel('Ver servicio')).toHaveValue('all');
-  await expect(page.getByRole('status')).toContainText('Nadie ha reportado cortes en la zona piloto.');
+  await expect(page.getByRole('status')).toContainText('1 confirmado.');
+
+  await page.getByLabel('Ver servicio').selectOption('electricity');
+  await expect(page.getByRole('status')).toContainText('No hay cortes reportados en este momento.');
+  await expect(page.getByLabel('Cortes confirmados por zona')).toBeEmpty();
 
   await page.getByLabel('Ver servicio').selectOption('water');
   await expect(page.getByRole('status')).toContainText('1 confirmado.');

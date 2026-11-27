@@ -1,7 +1,9 @@
 import { gridDisk, latLngToCell } from 'h3-js';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import {
+  loadH3,
+  toZones,
   boundaryContains,
   boundsOf,
   cellCenter,
@@ -20,6 +22,39 @@ import {
 } from './map.js';
 
 const limaCell = latLngToCell(-12.0464, -77.0428, 9);
+
+beforeAll(loadH3);
+
+describe('zone projection', () => {
+  const boundary = { minLatitude: -12.1, maxLatitude: -12, minLongitude: -77.1, maxLongitude: -77 };
+
+  it('keeps well-formed zones', () => {
+    expect(toZones([{ slug: 'rimac', name: 'Rímac', boundary, extra: 'dropped' }])).toEqual([{ slug: 'rimac', name: 'Rímac', boundary }]);
+  });
+
+  it('answers an empty list for a non-array payload', () => {
+    expect(toZones({ error: 'bad gateway' })).toEqual([]);
+    expect(toZones(null)).toEqual([]);
+  });
+
+  it('drops entries with a missing or malformed boundary', () => {
+    expect(toZones([null, 'x', { slug: 'a', name: 'A' }, { slug: 'b', name: 'B', boundary: { ...boundary, minLatitude: '1' } }, { slug: 'c', name: 'C', boundary: { ...boundary, maxLongitude: Number.NaN } }])).toEqual([]);
+  });
+});
+
+describe('blob memoisation', () => {
+  it('reuses the clustering for the same cells', () => {
+    const cells = [{ h3Cell: limaCell, service: 'water' as const, provider: 'sedapal' as const, confirmed: true }];
+    expect(toCellBlobs([...cells])).toBe(toCellBlobs([...cells]));
+  });
+
+  it('computes again when a cell changes', () => {
+    const first = toCellBlobs([{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true }]);
+    const second = toCellBlobs([{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: false }]);
+    expect(second).not.toBe(first);
+    expect(second[0]?.confirmed).toBe(false);
+  });
+});
 
 describe('public cell projection', () => {
   it('keeps only the public fields', () => {
@@ -166,7 +201,9 @@ describe('proximity', () => {
   it('reads distance the way a neighbour says it', () => {
     expect(formatDistance(0)).toBe('a 0 m');
     expect(formatDistance(304)).toBe('a 300 m');
-    expect(formatDistance(1240)).toBe('a 1,2 km');
+    // Lima's CLDR locale (es-PE) writes the decimal with a point.
+    expect(formatDistance(1240)).toBe('a 1.2 km');
+    expect(formatDistance(2000)).toBe('a 2.0 km');
   });
 
   it('orders the nearest condition first once a position is known', () => {
