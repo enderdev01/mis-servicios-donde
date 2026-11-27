@@ -25,6 +25,9 @@ export async function revealNotice(page: Page): Promise<void> {
   await page.getByRole('button', { name: noticeControl }).click();
 }
 
+/** The shape the Worker issues: `<uuid>.<64 hex>`. */
+export const defaultDeviceId = `00000000-0000-4000-8000-000000000001.${'a'.repeat(64)}`;
+
 /**
  * Keeps every test hermetic. A developer's local API on :3000 is proxied into
  * `vite preview` through `server.proxy`, so an unmocked `/v1` call would answer
@@ -35,6 +38,8 @@ export const test = base.extend({
   page: async ({ page }, use) => {
     await page.route('**tile.openstreetmap.org/**', (route) => route.abort());
     await page.route('**/v1/**', (route) => route.abort());
+    // Every report first needs a server-signed device id; a test may register its own route to change the answer.
+    await page.route('**/v1/device', (route) => route.fulfill({ status: 201, json: { deviceId: defaultDeviceId } }));
     await use(page);
   },
 });

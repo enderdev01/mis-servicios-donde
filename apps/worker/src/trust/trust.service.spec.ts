@@ -4,6 +4,8 @@ import {
   assessSubmissionEligibility,
   canonicalSubmissionHash,
   createVersionedDeviceToken,
+  issueDeviceId,
+  verifyDeviceId,
   sanitizeDisplayName,
   toPublicTrustOutcome,
 } from './trust.service.js';
@@ -19,6 +21,25 @@ describe('trust controls', () => {
     expect(canonicalSubmissionHash({ h3Cell: '8a2a1072b59ffff', services: ['internet', 'water'], status: 'outage' })).toBe(
       canonicalSubmissionHash({ h3Cell: '8a2a1072b59ffff', services: ['water', 'internet'], status: 'outage' }),
     );
+  });
+
+  it('issues a signed device id that only the same secret verifies', () => {
+    const issued = issueDeviceId('secret');
+    const [id] = issued.split('.');
+
+    expect(verifyDeviceId(issued, 'secret')).toBe(id);
+    expect(issueDeviceId('secret')).not.toBe(issued);
+    expect(verifyDeviceId(issued, 'other-secret')).toBeUndefined();
+    expect(verifyDeviceId(issued, '')).toBeUndefined();
+  });
+
+  it('rejects bare, tampered, truncated and non-string device ids', () => {
+    const issued = issueDeviceId('secret');
+    const [id, signature] = issued.split('.');
+
+    for (const bad of [id, `${id}.`, `.${signature}`, `other.${signature}`, `${id}.${signature?.slice(1)}`, `${issued}0`, '', 42, undefined, null]) {
+      expect(verifyDeviceId(bad, 'secret')).toBeUndefined();
+    }
   });
 
   it('sanitizes optional names and excludes a fourth hourly submission without disclosing why', () => {

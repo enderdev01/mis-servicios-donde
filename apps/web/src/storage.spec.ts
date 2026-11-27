@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { addOwnCell, cellsCacheMaxAgeMs, createSafeStorage, getDeviceId, readCells, readOwnCells, saveCells, type StorageLike } from './storage.js';
+import { addOwnCell, cellsCacheMaxAgeMs, createDeviceIdentity, createSafeStorage, readCells, readOwnCells, saveCells, type StorageLike } from './storage.js';
 
 function memory(): StorageLike & { data: Map<string, string> } {
   const data = new Map<string, string>();
@@ -50,16 +50,81 @@ describe('safe storage', () => {
   });
 });
 
-describe('device id', () => {
-  it('is created once and then reused', () => {
+describe('device identity', () => {
+  const signed = (letter: string) => `uuid-${letter}.${'a'.repeat(64)}`;
+  const issued = (id: string) => () => Promise.resolve(Response.json({ deviceId: id }, { status: 201 }));
+  const invalid = () => Response.json({ code: 'device_invalid' }, { status: 401 });
+  const ok = () => Response.json({ accepted: true }, { status: 201 });
+
+  it('asks the server for an id on the first report and reuses the stored one afterwards', async () => {
     const backing = memory();
-    const store = createSafeStorage(() => backing);
-    expect(getDeviceId(store, () => 'first')).toBe('first');
-    expect(getDeviceId(store, () => 'second')).toBe('first');
+    const issue = vi.fn(issued(signed('1')));
+    const withDevice = createDeviceIdentity(createSafeStorage(() => backing), issue);
+    const sent: string[] = [];
+    const send = (id: string) => { sent.push(id); return Promise.resolve(ok()); };
+
+    await withDevice(send);
+    await withDevice(send);
+
+    expect(sent).toEqual([signed('1'), signed('1')]);
+    expect(issue).toHaveBeenCalledTimes(1);
+    expect(backing.data.get('mis-servicios:device-id')).toBe(signed('1'));
   });
 
-  it('still answers an id for this visit when storage is blocked', () => {
-    expect(getDeviceId(createSafeStorage(blocked), () => 'session-only')).toBe('session-only');
+  it('treats an old unsigned UUID as absent and replaces it', async () => {
+    const backing = memory();
+    backing.data.set('mis-servicios:device-id', '3f2b8c1e-0000-4000-8000-000000000000');
+    const sent: string[] = [];
+
+    await createDeviceIdentity(createSafeStorage(() => backing), issued(signed('1')))((id) => { sent.push(id); return Promise.resolve(ok()); });
+
+    expect(sent).toEqual([signed('1')]);
+    expect(backing.data.get('mis-servicios:device-id')).toBe(signed('1'));
+  });
+
+  it('drops the id on 401 device_invalid and retries once with a new one', async () => {
+    const backing = memory();
+    backing.data.set('mis-servicios:device-id', signed('old'));
+    const sent: string[] = [];
+    const response = await createDeviceIdentity(createSafeStorage(() => backing), issued(signed('new')))((id) => {
+      sent.push(id);
+      return Promise.resolve(id === signed('old') ? invalid() : ok());
+    });
+
+    expect(response.status).toBe(201);
+    expect(sent).toEqual([signed('old'), signed('new')]);
+    expect(backing.data.get('mis-servicios:device-id')).toBe(signed('new'));
+  });
+
+  it('retries only once and leaves any other 401 alone', async () => {
+    const stillInvalid = vi.fn(() => Promise.resolve(invalid()));
+    const twice = await createDeviceIdentity(createSafeStorage(() => memory()), issued(signed('1')))(stillInvalid);
+    expect(twice.status).toBe(401);
+    expect(stillInvalid).toHaveBeenCalledTimes(2);
+
+    const other = vi.fn(() => Promise.resolve(Response.json({ code: 'nope' }, { status: 401 })));
+    await createDeviceIdentity(createSafeStorage(() => memory()), issued(signed('1')))(other);
+    expect(other).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns the issue failure without sending the report', async () => {
+    const send = vi.fn();
+    const limited = () => Promise.resolve(Response.json({ code: 'rate_limited', retryAfterSeconds: 60 }, { status: 429 }));
+
+    const response = await createDeviceIdentity(createSafeStorage(() => memory()), limited)(send);
+
+    expect(response.status).toBe(429);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('keeps the id for this visit when storage is blocked', async () => {
+    const issue = vi.fn(issued(signed('1')));
+    const withDevice = createDeviceIdentity(createSafeStorage(blocked), issue);
+
+    await withDevice(() => Promise.resolve(ok()));
+    await withDevice(() => Promise.resolve(ok()));
+
+    expect(issue).toHaveBeenCalledTimes(1);
   });
 });
 

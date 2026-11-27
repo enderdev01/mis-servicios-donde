@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { signDeviceId } from '../src/trust/trust.service.js';
 import { count, db, limaCell, request, resetDatabase, submit } from './helpers.js';
 
 const generic = { code: 'report_unavailable', message: 'Unable to process report.' };
@@ -57,7 +58,13 @@ describe('quorum under concurrency', () => {
 });
 
 describe('replay and conflict', () => {
-  const report = { deviceId: 'replay-device', submissionId: 'replay-1', services: ['water', 'electricity', 'internet'], providers: { water: 'sedapal', electricity: 'luz_del_sur', internet: 'win' }, name: 'Ana' };
+  // A fresh device per test: the per-device hourly limit outlives the database reset.
+  let devices = 0;
+  const base = { submissionId: 'replay-1', services: ['water', 'electricity', 'internet'], providers: { water: 'sedapal', electricity: 'luz_del_sur', internet: 'win' }, name: 'Ana' };
+  let report = { ...base, deviceId: 'replay-device-0' };
+  beforeEach(() => {
+    report = { ...base, deviceId: `replay-device-${(devices += 1)}` };
+  });
 
   it('expands a submission across its services and keeps coordinates and device ids out of storage', async () => {
     const response = await submit(report);
@@ -174,7 +181,7 @@ describe('input handling', () => {
   });
 
   it('rejects a malformed body generically', async () => {
-    const response = await request('/v1/reports', { submissionId: 'x' });
+    const response = await request('/v1/reports', { submissionId: 'x', deviceId: signDeviceId('malformed-device', 'test-device-secret') });
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual(generic);

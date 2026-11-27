@@ -18,10 +18,10 @@ interface Bucket {
   resetAt: number;
 }
 
-const DEFAULT_REPORT_POLICY: WindowPolicy = { maxRequests: 5, windowMs: 3_600_000 };
+const DEFAULT_REPORT_POLICY: WindowPolicy = { maxRequests: 60, windowMs: 3_600_000 };
 
 /**
- * Fixed-window counter for one key (one client IP). The window lives in storage, not
+ * Fixed-window counter for one key (a client IP or a device id). The window lives in storage, not
  * in memory, because the hourly report limit has to outlive an evicted instance.
  */
 export class WindowCounter {
@@ -43,10 +43,19 @@ export class WindowCounter {
   }
 }
 
-export function reportPolicyFromEnv(environment: Record<string, string | undefined> = process.env): WindowPolicy {
+export type LimitKind = 'report-ip' | 'report-device' | 'device-issue';
+
+const POLICIES: Record<LimitKind, { prefix: string; defaults: WindowPolicy }> = {
+  'report-ip': { prefix: 'REPORT_RATE_LIMIT', defaults: DEFAULT_REPORT_POLICY },
+  'report-device': { prefix: 'DEVICE_REPORT_RATE_LIMIT', defaults: { maxRequests: 5, windowMs: 3_600_000 } },
+  'device-issue': { prefix: 'DEVICE_ISSUE_RATE_LIMIT', defaults: { maxRequests: 60, windowMs: 3_600_000 } },
+};
+
+export function policyFromEnv(kind: LimitKind, environment: Record<string, string | undefined> = process.env): WindowPolicy {
+  const { prefix, defaults } = POLICIES[kind];
   return {
-    maxRequests: readPositiveInteger(environment.REPORT_RATE_LIMIT_MAX, DEFAULT_REPORT_POLICY.maxRequests),
-    windowMs: readPositiveInteger(environment.REPORT_RATE_LIMIT_WINDOW_MS, DEFAULT_REPORT_POLICY.windowMs),
+    maxRequests: readPositiveInteger(environment[`${prefix}_MAX`], defaults.maxRequests),
+    windowMs: readPositiveInteger(environment[`${prefix}_WINDOW_MS`], defaults.windowMs),
   };
 }
 
