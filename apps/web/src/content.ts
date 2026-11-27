@@ -27,6 +27,41 @@ export const reportCopy = {
   mapFailed: 'No pudimos cargar el mapa. Revisa tu conexión y recarga la página.',
 };
 
+/** Wording rule: «distrito» for the covered places, «área» for a drawn spot, «zona amplia» only in the privacy sentence. */
+export const mapLabel = 'Mapa de cortes y reportes sin confirmar. La misma información está en la lista del panel.';
+
+export const outsideCoverageAnswer = 'Tu ubicación está fuera de los distritos con cobertura. Aquí todavía no podemos mostrar ni recibir reportes.';
+
+export function coverageList(districts: string[]): string {
+  return districts.length === 0 ? '' : `Distritos con cobertura: ${districts.join(', ')}.`;
+}
+
+/** Nothing reported anywhere: names the covered districts so an empty map is not mistaken for «all fine here». */
+export function emptyMapState(district: string | undefined, covered: string[]): string {
+  const where = district ?? 'los distritos con cobertura';
+  const list = !district && covered.length > 0 ? ` (${covered.join(', ')})` : '';
+  return `Nadie ha reportado cortes en ${where}${list}. Si se fue el servicio en tu casa, repórtalo: así sabrás si es solo tu casa.`;
+}
+
+/** A district with nothing reported while other districts have areas: say where the rest is. */
+export function emptyDistrictState(district: string, otherAreas: number): string {
+  return `Nadie ha reportado cortes en ${district}. Hay ${otherAreas === 1 ? '1 área' : `${otherAreas} áreas`} con reportes en otros distritos.`;
+}
+
+/** A dialog titled «Cortes» over a single unconfirmed report would present it as fact. */
+export function cellInfoTitle(allConfirmed: boolean): string {
+  return allConfirmed ? 'Cortes en esta área' : 'Reportes en esta área';
+}
+
+/** The promise made after sending must be one the map keeps, so it follows the status sent. */
+export function thanksMessage(status: string | undefined): string {
+  return status === 'restored'
+    ? 'Gracias. Si otros vecinos también avisan que volvió, el corte se cerrará en el mapa.'
+    : 'Recibimos tu reporte. Aparecerá en el mapa como «sin confirmar» hasta que otros vecinos reporten lo mismo cerca de ti.';
+}
+
+export const ownReportLabel = 'Tu reporte · sin confirmar';
+
 export interface OnboardingStep {
   id: string;
   title: string;
@@ -45,7 +80,7 @@ export const onboardingSteps: OnboardingStep[] = [
     title: 'Un mapa hecho por vecinos',
     body: 'Los cortes de agua, luz e internet que ves aquí los reportan vecinos como tú, no las empresas.',
     image: '/onboarding/1onboard.webp',
-    alt: 'Ilustración de vecinos en un barrio con un mapa que marca zonas con cortes.',
+    alt: 'Ilustración de vecinos en un barrio con un mapa que marca áreas con cortes.',
   },
   {
     id: 'location',
@@ -64,7 +99,7 @@ export const onboardingSteps: OnboardingStep[] = [
   {
     id: 'publication',
     title: 'Cómo se publica tu reporte',
-    body: 'Tu primer reporte aparece como «sin confirmar». Cuando tres vecinos distintos reportan lo mismo en la zona, el corte queda confirmado. Puedes enviar un reporte por dispositivo, servicio y estado cada hora, y solo dentro de las zonas piloto aprobadas.',
+    body: 'Tu primer reporte aparece como «sin confirmar». Cuando tres vecinos distintos reportan lo mismo en el mismo lugar, el corte queda confirmado. Puedes enviar un reporte por dispositivo, servicio y estado cada hora, y solo en los distritos donde funciona el mapa por ahora.',
     image: '/onboarding/4onboard.webp',
     alt: 'Ilustración de tres vecinos distintos reportando lo mismo y el corte quedando confirmado en el mapa.',
   },

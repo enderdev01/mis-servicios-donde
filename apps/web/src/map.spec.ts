@@ -2,6 +2,10 @@ import { gridDisk, latLngToCell } from 'h3-js';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import {
+  areaRows,
+  countAreas,
+  dedupeRows,
+  positionCell,
   loadH3,
   toZones,
   boundaryContains,
@@ -254,26 +258,78 @@ describe('lead answer', () => {
     expect(leadAnswer([])).toBe('Sin cortes reportados cerca.');
   });
 
-  it('leads with the nearest service and its distance', () => {
-    expect(leadAnswer([{ h3Cell: limaCell, service: 'electricity', provider: 'luz_del_sur', confirmed: true, metres: 470 }])).toBe('Lo más cerca: Luz a 470 m');
+  it('leads with the nearest confirmed outage and its distance', () => {
+    expect(leadAnswer([{ h3Cell: limaCell, service: 'electricity', provider: 'luz_del_sur', confirmed: true, metres: 470 }])).toBe('Corte de luz confirmado a 470 m');
   });
 
-  it('counts zones, singular, when the visitor shared no position', () => {
-    expect(leadAnswer([{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true }]))
-      .toBe('1 zona con cortes en el piloto. Activa tu ubicación para ver cuál te queda más cerca.');
+  it('never words a lone unconfirmed report as an outage when it is the nearest', () => {
+    const farCell = gridDisk(limaCell, 5).find((cell) => cell !== limaCell && !gridDisk(limaCell, 1).includes(cell));
+    expect(leadAnswer([{ h3Cell: limaCell, service: 'electricity', provider: 'luz_del_sur', confirmed: false, metres: 130 }]))
+      .toBe('Sin cortes confirmados cerca. Hay un reporte de luz sin confirmar a 130 m.');
+    expect(leadAnswer([
+      { h3Cell: limaCell, service: 'electricity', provider: 'luz_del_sur', confirmed: false, metres: 130 },
+      { h3Cell: farCell!, service: 'water', provider: 'sedapal', confirmed: true, metres: 510 },
+    ])).toBe('Corte de agua confirmado a 510 m. Más cerca, un reporte de luz sin confirmar a 130 m.');
   });
 
-  it('counts contiguous cells as one zone and separate services as separate zones', () => {
+  it('counts confirmed outages and unconfirmed reports apart when the visitor shared no position', () => {
+    expect(leadAnswer([{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true }])).toBe('1 corte confirmado.');
+    expect(leadAnswer([{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: false }]))
+      .toBe('1 reporte sin confirmar. Todavía no hay cortes confirmados.');
+    expect(leadAnswer([
+      { h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true },
+      { h3Cell: limaCell, service: 'internet', provider: 'movistar', confirmed: false },
+    ])).toBe('1 corte confirmado y 1 reporte sin confirmar.');
+  });
+
+  it('counts contiguous cells as one area and separate services as separate areas', () => {
     const adjacentCell = gridDisk(limaCell, 1).find((cell) => cell !== limaCell);
     expect(adjacentCell).toBeDefined();
 
     expect(leadAnswer([
       { h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true },
       { h3Cell: adjacentCell!, service: 'water', provider: 'sedapal', confirmed: true },
-    ])).toMatch(/^1 zona con cortes/);
+    ])).toBe('1 corte confirmado.');
     expect(leadAnswer([
       { h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true },
       { h3Cell: limaCell, service: 'internet', provider: 'movistar', confirmed: true },
-    ])).toMatch(/^2 zonas con cortes/);
+    ])).toBe('2 cortes confirmados.');
+  });
+
+  it('does not tell the visitor to enable the location: the page offers a button instead', () => {
+    expect(leadAnswer([{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true }])).not.toMatch(/ubicación/);
+  });
+});
+
+describe('areas, not cells', () => {
+  it('counts one area per contiguous run, so the summary matches the rows', () => {
+    const adjacentCell = gridDisk(limaCell, 1).find((cell) => cell !== limaCell);
+    const cells = [
+      { h3Cell: limaCell, service: 'water' as const, provider: 'sedapal' as const, confirmed: true },
+      { h3Cell: adjacentCell!, service: 'water' as const, provider: 'sedapal' as const, confirmed: true },
+      { h3Cell: limaCell, service: 'electricity' as const, provider: 'luz_del_sur' as const, confirmed: true },
+      { h3Cell: limaCell, service: 'internet' as const, provider: 'movistar' as const, confirmed: false },
+    ];
+    expect(countAreas(cells)).toEqual({ confirmed: 2, pending: 1 });
+    expect(areaRows(cells)).toHaveLength(3);
+  });
+
+  it('lists an unmappable index as its own row', () => {
+    expect(areaRows([{ h3Cell: '8999999999fffff', service: 'water', provider: 'sedapal', confirmed: true }])).toHaveLength(1);
+  });
+
+  it('drops identical dialog rows but keeps a different company or state', () => {
+    const rows = [
+      { service: 'water' as const, provider: 'sedapal' as const, confirmed: true },
+      { service: 'water' as const, provider: 'sedapal' as const, confirmed: true },
+      { service: 'water' as const, provider: 'other' as const, confirmed: true },
+      { service: 'water' as const, provider: 'sedapal' as const, confirmed: false },
+    ];
+    expect(dedupeRows(rows)).toHaveLength(3);
+  });
+
+  it('finds the cell of a position at the resolution of a published cell', () => {
+    expect(positionCell([-12.0464, -77.0428], limaCell)).toBe(limaCell);
+    expect(positionCell([-12.0464, -77.0428])).toBe(limaCell);
   });
 });

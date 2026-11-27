@@ -11,7 +11,7 @@ test('offers an unofficial filtered map and accessible report validation', async
   // Returning-user state: this spec exercises the map and panel, not the first run.
   await asReturningVisitor(page);
   // The service filter narrows one full response in the browser: no per-service request exists.
-  await page.route('**/v1/cells', (route) => route.fulfill({ json: [{ h3Cell: '8999999999fffff', service: 'water', provider: 'sedapal', confirmed: true, reports: 3 }] }));
+  await page.route('**/v1/cells', (route) => route.fulfill({ json: [{ h3Cell: '8999999999fffff', service: 'water', provider: 'sedapal', confirmed: true }] }));
   await page.goto('/');
 
   await expect(page.getByRole('heading', { name: '¿Es solo tu casa?' })).toBeVisible();

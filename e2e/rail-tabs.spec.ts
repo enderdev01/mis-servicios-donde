@@ -52,6 +52,8 @@ async function canFocus(page: Page, selector: string): Promise<boolean> {
 
 test('splits the mobile panel into a report tab and a reports tab', async ({ page }) => {
   await asReturningVisitor(page);
+  // With nothing reported the filters are hidden altogether (UX2-14), so one area gives them a reason to show.
+  await page.route('**/v1/cells', (route) => route.fulfill({ json: [{ h3Cell: '898e62c0cdbffff', service: 'water', provider: 'sedapal', confirmed: true }] }));
   await page.setViewportSize(MOBILE);
   await page.goto('/');
   await openSheet(page);
@@ -68,7 +70,7 @@ test('splits the mobile panel into a report tab and a reports tab', async ({ pag
   expect(order, 'report on the left, reports on the right').toEqual(['Reportar', 'Reportes']);
 
   // One panel at a time.
-  await expect(page.getByRole('heading', { name: 'Reportar un corte' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '¿Se fue o volvió el servicio?' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Cortes cerca tuyo' })).toBeHidden();
   await expect(page.getByLabel('Ver distrito')).toBeHidden();
 
@@ -81,10 +83,11 @@ test('splits the mobile panel into a report tab and a reports tab', async ({ pag
   await reports.click();
   await expect(reports).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('heading', { name: 'Cortes cerca tuyo' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Reportar un corte' })).toBeHidden();
+  await expect(page.getByRole('heading', { name: '¿Se fue o volvió el servicio?' })).toBeHidden();
   await expect(page.locator('#report-form')).toBeHidden();
   expect(await canFocus(page, '#submit'), 'the hidden form is unfocusable').toBe(false);
-  expect(await canFocus(page, '#district-filter'), 'the shown filters are focusable').toBe(true);
+  // The filters sit behind a closed summary on a phone (UX2-14): that summary is what the shown panel exposes.
+  expect(await canFocus(page, '#filters-summary'), 'the shown filters are focusable').toBe(true);
 
   // The legend decodes the same levels the list and the map blobs use, so it
   // travels with the reports tab.
@@ -204,7 +207,7 @@ test('shows both desktop panels and declares no tabs there', async ({ page }) =>
   await expect(page.getByRole('tablist')).toHaveCount(0);
   await expect(page.getByRole('tab')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Cortes cerca tuyo' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Reportar un corte' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '¿Se fue o volvió el servicio?' })).toBeVisible();
   await expect(page.locator('#report-form')).toBeVisible();
   await expect(page.locator('#map-legend')).toBeVisible();
 
