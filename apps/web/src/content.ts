@@ -12,6 +12,21 @@ export const locationSuccess = {
   detail: 'Los cortes cerca tuyo se ordenan por distancia. Tu posición no se guarda.',
 };
 
+/** `GeolocationPositionError.code` tells a denied permission apart from a slow or missing fix. */
+export function reportLocationError(code: number): string {
+  if (code === 2) return 'No pudimos detectar tu ubicación: parece que no hay señal de GPS. Prueba cerca de una ventana o con los datos activados y reintenta.';
+  if (code === 3) return 'Tu ubicación tardó demasiado en llegar. Reintenta.';
+  return 'Para enviar el reporte necesitamos tu ubicación una sola vez. Permite la ubicación para este sitio en tu navegador y vuelve a enviarlo.';
+}
+
+export const reportCopy = {
+  timeout: 'La conexión está lenta y no supimos si tu reporte llegó. Reintenta: no se enviará dos veces.',
+  loadFailed: 'No pudimos cargar los cortes. Revisa tu conexión.',
+  loadFailedState: 'No pudimos cargar los cortes ahora. Revisa tu conexión.',
+  stale: 'No pudimos actualizar los cortes. Esto es lo último que tenemos.',
+  mapFailed: 'No pudimos cargar el mapa. Revisa tu conexión y recarga la página.',
+};
+
 export interface OnboardingStep {
   id: string;
   title: string;

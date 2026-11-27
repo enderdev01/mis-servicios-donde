@@ -21,7 +21,7 @@ test('submits a report and renders only the public aggregate after confirmation'
     reported = true;
     await route.fulfill({ status: 201, json: { submissionId: 'release-browser-submission', accepted: true } });
   });
-  await page.route('**/v1/cells?service=water', async (route) => route.fulfill({
+  await page.route('**/v1/cells', async (route) => route.fulfill({
     json: reported ? [{ h3Cell: '8999999999fffff', service: 'water', provider: 'sedapal', confirmed: true, reports: 3, deviceToken: 'never-public' }] : [],
   }));
 

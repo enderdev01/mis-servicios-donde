@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { locationSuccess, onboardingSteps, siteNotice, unofficialNotice } from './content.js';
+import { locationSuccess, onboardingSteps, reportLocationError, siteNotice, unofficialNotice } from './content.js';
+
+describe('report location errors', () => {
+  it('only asks for the permission when it was denied', () => {
+    expect(reportLocationError(1)).toContain('Permite la ubicación');
+    expect(reportLocationError(2)).not.toContain('Permite');
+    expect(reportLocationError(3)).toContain('Reintenta');
+    expect(reportLocationError(3)).not.toContain('Permite');
+  });
+});
 
 describe('site content', () => {
   it('identifies the community data as unofficial', () => {
