@@ -1,5 +1,12 @@
 ---
-import { siteNotice, unofficialNotice } from '../content.js';
+import '@fontsource-variable/nunito/wght.css';
+import '@fontsource/comfortaa/700.css';
+import nunitoLatin from '@fontsource-variable/nunito/files/nunito-latin-wght-normal.woff2?url';
+import { onboardingSteps, siteNotice, unofficialNotice } from '../content.js';
+
+const origin = Astro.site?.origin;
+const title = 'Mis Servicios | Mapa comunitario de cortes';
+const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima. Información generada por vecinos, no oficial.';
 ---
 
 <!doctype html>
@@ -8,11 +15,26 @@ import { siteNotice, unofficialNotice } from '../content.js';
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#EFF2EC" />
-    <meta name="description" content="Mapa comunitario de cortes de agua, luz e internet en Lima. Información generada por vecinos, no oficial." />
-    <title>Mis Servicios | Mapa comunitario de cortes</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Comfortaa:wght@600;700&family=Nunito:wght@400;600;800&display=swap" />
+    <meta name="description" content={description} />
+    <title>{title}</title>
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="es_PE" />
+    <meta property="og:site_name" content="Mis Servicios" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    {origin && <link rel="canonical" href={`${origin}/`} />}
+    {origin && <meta property="og:url" content={`${origin}/`} />}
+    {origin && <meta property="og:image" content={`${origin}/og-image.png`} />}
+    {origin && <meta property="og:image:width" content="1200" />}
+    {origin && <meta property="og:image:height" content="630" />}
+    {origin && <meta name="twitter:card" content="summary_large_image" />}
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="preconnect" href="https://tile.openstreetmap.org" />
+    <link rel="preload" as="font" type="font/woff2" href={nunitoLatin} crossorigin />
+    <!-- First-visit LCP: the first onboarding slide is fetched from the HTML, not after the app bundle runs. -->
+    <link rel="preload" as="image" href={onboardingSteps[0]?.image} fetchpriority="high" />
   </head>
   <body>
     <!--
@@ -75,6 +97,7 @@ import { siteNotice, unofficialNotice } from '../content.js';
         <span class="grip-label" id="grip-label">Ver el panel</span>
       </button>
       <p class="answer" id="answer" tabindex="-1">Buscando cortes confirmados…</p>
+      <noscript><p class="answer">Este mapa necesita JavaScript. Actívalo en tu navegador y recarga la página.</p></noscript>
 
       <div class="rail-body" id="rail-body">
         <h1>¿Es solo tu casa?</h1>
@@ -170,6 +193,9 @@ import { siteNotice, unofficialNotice } from '../content.js';
       <p class="dialog-notice">{siteNotice}</p>
       <button type="button" id="cell-info-close">Cerrar</button>
     </dialog>
+
+    <!-- Plain file in public/ (not a bundled script): Astro would inline it and the CSP forbids inline scripts. -->
+    <script is:inline src="/boot-watchdog.js" defer></script>
 
     <script>
       import L from 'leaflet';
@@ -1288,7 +1314,8 @@ import { siteNotice, unofficialNotice } from '../content.js';
         margin: 0;
         background: var(--ground);
         color: var(--ink);
-        font-family: Nunito, ui-rounded, system-ui, sans-serif;
+        font-family: 'Nunito Variable', ui-rounded, system-ui, sans-serif;
+        font-size-adjust: from-font;
         overflow: hidden;
         -webkit-tap-highlight-color: transparent;
       }
@@ -1403,7 +1430,7 @@ import { siteNotice, unofficialNotice } from '../content.js';
       /* An author `display` beats the UA `[hidden]` rule, so restate it. */
       .plate[hidden] { display: none; }
       @keyframes identity-open { from { opacity: 0; transform: translateY(-4px); } }
-      .wordmark { margin: 0; font-family: Comfortaa, Nunito, sans-serif; font-weight: 700; font-size: 1.05rem; letter-spacing: -.01em; }
+      .wordmark { margin: 0; font-family: Comfortaa, 'Nunito Variable', sans-serif; font-weight: 700; font-size: 1.05rem; letter-spacing: -.01em; }
       .unofficial { margin: 0; color: var(--muted); font-size: .84rem; line-height: 1.4; max-width: 62ch; text-wrap: pretty; }
 
       /*
@@ -1510,7 +1537,7 @@ import { siteNotice, unofficialNotice } from '../content.js';
       }
       .onboarding-figure img { width: 100%; height: 100%; object-fit: contain; }
       .onboarding-title {
-        margin: 0 0 .55rem; font-family: Comfortaa, Nunito, sans-serif; font-weight: 700;
+        margin: 0 0 .55rem; font-family: Comfortaa, 'Nunito Variable', sans-serif; font-weight: 700;
         font-size: 1.45rem; line-height: 1.15; letter-spacing: -.02em; text-wrap: balance;
       }
       .onboarding-title:focus-visible { outline: none; }
@@ -1596,7 +1623,7 @@ import { siteNotice, unofficialNotice } from '../content.js';
         box-shadow: var(--shadow-modal);
       }
       #thanks::backdrop { background: rgb(22 32 26 / .4); backdrop-filter: blur(3px); }
-      #thanks h2 { margin: 0 0 .6rem; font-family: Comfortaa, Nunito, sans-serif; font-size: 1.25rem; letter-spacing: -.02em; }
+      #thanks h2 { margin: 0 0 .6rem; font-family: Comfortaa, 'Nunito Variable', sans-serif; font-size: 1.25rem; letter-spacing: -.02em; }
       #thanks p { margin: 0 0 1.1rem; color: var(--muted); font-size: .9rem; line-height: 1.55; }
       #thanks button {
         width: 100%; padding: .7rem; font: inherit; font-weight: 800; font-size: .92rem;
@@ -1612,7 +1639,7 @@ import { siteNotice, unofficialNotice } from '../content.js';
         box-shadow: var(--shadow-modal);
       }
       #cell-info::backdrop { background: rgb(22 32 26 / .4); backdrop-filter: blur(3px); }
-      #cell-info h2 { margin: 0 0 .8rem; font-family: Comfortaa, Nunito, sans-serif; font-size: 1.25rem; letter-spacing: -.02em; }
+      #cell-info h2 { margin: 0 0 .8rem; font-family: Comfortaa, 'Nunito Variable', sans-serif; font-size: 1.25rem; letter-spacing: -.02em; }
       #cell-info button {
         width: 100%; padding: .7rem; font: inherit; font-weight: 800; font-size: .92rem;
         color: #fff; background: var(--ink); border: 0; border-radius: var(--r-md); cursor: pointer;
@@ -1736,7 +1763,7 @@ import { siteNotice, unofficialNotice } from '../content.js';
       .rail:has(> .rail-body[data-tabs='on']) { height: 86dvh; }
 
       h1 {
-        margin: .1rem 0 .45rem; font-family: Comfortaa, Nunito, sans-serif; font-weight: 700;
+        margin: .1rem 0 .45rem; font-family: Comfortaa, 'Nunito Variable', sans-serif; font-weight: 700;
         font-size: clamp(1.6rem, 5.2vw, 2.1rem); line-height: 1.1; letter-spacing: -.02em; text-wrap: balance;
       }
       .lede { margin: 0 0 1rem; color: var(--muted); font-size: .9rem; line-height: 1.55; max-width: 46ch; }

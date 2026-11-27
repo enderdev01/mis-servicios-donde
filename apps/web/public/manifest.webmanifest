@@ -1,0 +1,16 @@
+{
+  "name": "Mis Servicios | Mapa comunitario de cortes",
+  "short_name": "Mis Servicios",
+  "description": "Mapa comunitario de cortes de agua, luz e internet en Lima. Información generada por vecinos, no oficial.",
+  "lang": "es",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#EFF2EC",
+  "background_color": "#EFF2EC",
+  "icons": [
+    { "src": "/icons/app-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/app-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
