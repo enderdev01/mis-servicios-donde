@@ -6,7 +6,7 @@ They run in `apps/worker` as one `Scheduler` Durable Object alarm (plus an hourl
 
 | Job | Rule | Check |
 |---|---|---|
-| Alert dispatch | Wakes after `ALERT_DISPATCH_INTERVAL_SECONDS` (30) while work is pending, when the next retry is due, or after `ALERT_DISPATCH_IDLE_INTERVAL_SECONDS` (1800) when the outbox is empty. With dispatch off it cancels pending and retryable intents | `npm run test:unit --workspace @mis-servicios/worker` |
+| Alert dispatch | Wakes after `ALERT_DISPATCH_INTERVAL_SECONDS` (30) while work is pending, when the next retry is due, or after `ALERT_DISPATCH_IDLE_INTERVAL_SECONDS` (1800) when the outbox is empty. With dispatch off it leaves the outbox untouched; after 8 failed sends an intent becomes `failed` and is never claimed again | `npm run test:unit --workspace @mis-servicios/worker` |
 | Episode expiry | Every `EPISODE_EXPIRY_INTERVAL_SECONDS` (300; the Worker sets 3600) closes episodes past their lifetime | same |
 | Retention | Only when `RETENTION_WORKER_ENABLED=true`; first run at the next midnight in Lima, then daily | same |
 

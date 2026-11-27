@@ -2,7 +2,14 @@ import { nowSql, offsetSql, selectRows } from '../database/d1.js';
 import { clampCycleDelayMs, configuredIntervalMs } from '../workers/interval-worker.js';
 
 type Service = 'water' | 'electricity' | 'internet';
-interface ClaimedIntent { id: string; content: string; attempts: number; leaseToken: string }
+interface ClaimedIntent { id: string; kind: string; content: string; attempts: number; leaseToken: string }
+
+/** Total delivery attempts before an intent becomes terminally `failed`. */
+export const maxDeliveryAttempts = 8;
+
+class TelegramRejection extends Error {
+  constructor(readonly status: number) { super('Telegram rejected the alert.'); }
+}
 
 /** What one dispatch cycle observed in the outbox, so the worker can sleep accordingly. */
 export interface DispatchCycleSummary {
@@ -48,10 +55,8 @@ export class AlertsService {
   }
 
   async dispatchPending(): Promise<DispatchCycleSummary> {
-    if (process.env.ALERT_DISPATCH_ENABLED !== 'true') {
-      await this.db.prepare(`UPDATE "AlertIntent" SET "status" = 'cancelled', "cancelledAt" = ${nowSql} WHERE "status" IN ('pending', 'retryable')`).run();
-      return { claimedWork: false, nextDueInSeconds: null };
-    }
+    // Disabled never touches the outbox: a config typo must not drop alerts. Retention deletes old rows.
+    if (process.env.ALERT_DISPATCH_ENABLED !== 'true') return { claimedWork: false, nextDueInSeconds: null };
     const intents = await this.claimPending();
     if (intents.length === 0) return { claimedWork: false, nextDueInSeconds: await this.nextDueInSeconds() };
     for (const intent of intents) await this.deliver(intent);
@@ -88,7 +93,7 @@ export class AlertsService {
       this.db,
       `UPDATE "AlertIntent" SET "leaseToken" = ?, "leaseExpiresAt" = ${offsetSql('+5 minutes')}
       WHERE "id" IN (SELECT "id" FROM "AlertIntent" WHERE ${claimableNowPredicate} ORDER BY "createdAt" LIMIT 10) AND ${claimableNowPredicate}
-      RETURNING "id", "content", "attempts", "leaseToken"`,
+      RETURNING "id", "kind", "content", "attempts", "leaseToken"`,
       [leaseToken],
     );
     return rows.filter((intent): intent is ClaimedIntent => intent.leaseToken !== null);
@@ -100,8 +105,14 @@ export class AlertsService {
     try {
       await this.sendTelegram(intent.content);
       await this.db.prepare(`UPDATE "AlertIntent" SET "status" = 'delivered', "deliveredAt" = ${nowSql}, "leaseToken" = NULL, "leaseExpiresAt" = NULL WHERE ${owned}`).bind(intent.id, intent.leaseToken).run();
-    } catch {
+    } catch (error) {
       const attempts = intent.attempts + 1;
+      if (attempts >= maxDeliveryAttempts) {
+        const result = await this.db.prepare(`UPDATE "AlertIntent" SET "status" = 'failed', "attempts" = ?, "leaseToken" = NULL, "leaseExpiresAt" = NULL WHERE ${owned}`).bind(attempts, intent.id, intent.leaseToken).run();
+        // Only log when this cycle really ended the intent (a cancel may have won the race). Never log message content.
+        if (result.meta.changes > 0) console.error(`Alert intent ${intent.id} (${intent.kind}) failed permanently after ${attempts} attempts${error instanceof TelegramRejection ? ` (HTTP ${error.status})` : ''}.`);
+        return;
+      }
       await this.db.prepare(`UPDATE "AlertIntent" SET "status" = 'retryable', "attempts" = ?, "nextAttemptAt" = ${offsetSql(`+${retryDelaySeconds(attempts)} seconds`)}, "leaseToken" = NULL, "leaseExpiresAt" = NULL WHERE ${owned}`).bind(attempts, intent.id, intent.leaseToken).run();
     }
   }
@@ -111,7 +122,7 @@ export class AlertsService {
     const chatId = process.env.TELEGRAM_CHAT_ID;
     if (!token || !chatId) throw new Error('Telegram is not configured.');
     const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text: content }) });
-    if (!response.ok) throw new Error('Telegram rejected the alert.');
+    if (!response.ok) throw new TelegramRejection(response.status);
   }
 }
 
