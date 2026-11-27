@@ -15,4 +15,4 @@ What the app does and how to exercise each part: [.claude/verification/features/
 
 ## Branch policy
 
-Work on a `feat/`, `fix/` or `hotfix/` branch off `develop`. The git hooks in `.githooks/` refuse commits on `develop` and `master`, and refuse commit messages that carry AI attribution. `master` is the Vercel production branch: merging to it deploys the web app.
+Work on a `feat/`, `fix/` or `hotfix/` branch off `develop`. The git hooks in `.githooks/` refuse commits on `develop` and `master`, and refuse commit messages that carry AI attribution. `master` is the production branch: merging to it deploys the web app (Vercel) and, through the `deploy-worker` CI job, applies the remote D1 migrations and deploys the Worker.

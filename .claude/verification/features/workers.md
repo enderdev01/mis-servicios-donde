@@ -19,6 +19,6 @@ Edge cases: a failing cycle retries at the base interval; a contradictory idle i
 | Command | What it does |
 |---|---|
 | `npm run db:migrate:local -w @mis-servicios/worker` | Applies `apps/worker/migrations/*.sql` to the local D1 database (schema in 0001, the ten pilot zones in 0002). Already applied files are skipped |
-| `npm run db:migrate:remote -w @mis-servicios/worker` | Same against the production D1 database. Needs a real `database_id` in `wrangler.jsonc` and Cloudflare credentials; do not run it without approval |
+| `npm run db:migrate:remote -w @mis-servicios/worker` | Same against the production D1 database. Needs a real `database_id` in `wrangler.jsonc` and Cloudflare credentials; do not run it without approval. The `deploy-worker` CI job runs it, then `wrangler deploy`, on every push to `master` |
 
 The Worker's D1 integration tests (`npm run test:unit -w @mis-servicios/worker`) apply the same migration files to an isolated in-memory database on workerd, so they need no setup. Never edit an applied migration; add a new one.
