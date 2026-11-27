@@ -2,7 +2,7 @@
 import '@fontsource-variable/nunito/wght.css';
 import '@fontsource/comfortaa/700.css';
 import nunitoLatin from '@fontsource-variable/nunito/files/nunito-latin-wght-normal.woff2?url';
-import { onboardingSteps, siteNotice, unofficialNotice } from '../content.js';
+import { mapLabel, onboardingSteps, siteNotice, unofficialNotice } from '../content.js';
 
 const origin = Astro.site?.origin;
 const title = 'Mis Servicios | Mapa comunitario de cortes';
@@ -64,11 +64,13 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
           <path d="M12 11.2v4.8" />
           <path d="M12 7.9h.01" />
         </svg>
+        <span class="identity-name">Mis Servicios</span>
         <span>No oficial</span>
       </button>
       <header class="plate" id="site-identity" hidden>
         <p class="wordmark">Mis Servicios</p>
         <p class="unofficial" role="note">{siteNotice} {unofficialNotice}</p>
+        <button type="button" class="plate-link" id="replay-intro">Ver cómo funciona</button>
       </header>
     </div>
 
@@ -120,37 +122,42 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
         -->
         <section class="panel" id="reports-panel" aria-labelledby="near-heading">
           <h2 id="near-heading">Cortes cerca tuyo</h2>
-          <ul id="map-legend" class="legend"></ul>
-          <div class="filters">
-            <label class="filter">
-              <span>Ver distrito</span>
-              <select id="district-filter" name="district">
-                <option value="all">Todos</option>
-              </select>
-            </label>
-            <label class="filter">
-              <span>Ver servicio</span>
-              <select id="service-filter" name="service">
-                <option value="all">Todos</option>
-                <option value="water">Agua</option>
-                <option value="electricity">Luz</option>
-                <option value="internet">Internet</option>
-              </select>
-            </label>
-            <label class="filter">
-              <span>Ver empresa</span>
-              <select id="provider-filter" name="provider">
-                <option value="all">Todas</option>
-              </select>
-            </label>
-          </div>
           <div id="map-state" role="status" aria-live="polite">No hay cortes confirmados en este momento.</div>
-          <ul id="cell-list" aria-label="Cortes confirmados por zona"></ul>
+          <ul id="cell-list" aria-label="Cortes reportados por área"></ul>
           <button type="button" class="locate" id="locate" hidden>Activar mi ubicación</button>
+          <ul id="map-legend" class="legend"></ul>
+          <ul id="map-legend-states" class="legend legend-states"></ul>
+          <details class="filters-box" id="filters-box">
+            <summary id="filters-summary">Filtrar (distrito, servicio, empresa)</summary>
+            <div class="filters">
+              <label class="filter">
+                <span>Ver distrito</span>
+                <select id="district-filter" name="district">
+                  <option value="all">Todos</option>
+                </select>
+              </label>
+              <label class="filter">
+                <span>Ver servicio</span>
+                <select id="service-filter" name="service">
+                  <option value="all">Todos</option>
+                  <option value="water">Agua</option>
+                  <option value="electricity">Luz</option>
+                  <option value="internet">Internet</option>
+                </select>
+              </label>
+              <label class="filter">
+                <span>Ver empresa</span>
+                <select id="provider-filter" name="provider">
+                  <option value="all">Todas</option>
+                </select>
+              </label>
+            </div>
+          </details>
         </section>
 
         <section class="panel" id="report-panel" aria-labelledby="report-heading">
-          <h2 id="report-heading" tabindex="-1">Reportar un corte</h2>
+          <h2 id="report-heading" tabindex="-1">¿Se fue o volvió el servicio?</h2>
+          <p class="fine" id="coverage-note" hidden></p>
           <p class="fine">Al enviar el reporte, tu ubicación exacta se manda una sola vez: el servidor la convierte en una zona amplia y la descarta. No se guarda ni se muestra.</p>
           <form id="report-form" novalidate>
             <fieldset>
@@ -182,21 +189,21 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
       map controls last. Both are fixed, so the visual order does not change.
     -->
     <div class="garden">
-      <div id="outage-map" role="region" aria-label="Mapa de zonas con cortes confirmados. Los mismos cortes aparecen como texto en el panel."></div>
+      <div id="outage-map" role="region" aria-label={mapLabel}></div>
     </div>
 
     <dialog id="thanks" aria-labelledby="thanks-title" closedby="any">
       <h2 id="thanks-title">¡Gracias por tu reporte!</h2>
-      <p>Recibimos tu reporte. Aparecerá en el mapa como «sin confirmar» hasta que otros vecinos reporten lo mismo.</p>
+      <p id="thanks-text">Recibimos tu reporte. Aparecerá en el mapa como «sin confirmar» hasta que otros vecinos reporten lo mismo cerca de ti.</p>
       <button type="button" id="thanks-close">Entendido</button>
     </dialog>
 
     <dialog id="cell-info" aria-labelledby="cell-info-title" closedby="any">
-      <h2 id="cell-info-title">Cortes en esta zona</h2>
+      <h2 id="cell-info-title">Cortes en esta área</h2>
       <ul id="cell-info-list" class="cell-info-list"></ul>
       <div id="cell-info-streets" class="cell-info-streets" role="status" aria-live="polite" hidden></div>
       <p class="dialog-notice">{siteNotice}</p>
-      <button type="button" id="cell-info-close">Cerrar</button>
+      <button type="button" id="cell-info-close" autofocus>Cerrar</button>
     </dialog>
 
     <!-- Plain file in public/ (not a bundled script): Astro would inline it and the CSP forbids inline scripts. -->
@@ -207,18 +214,19 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
       // the onboarding, the rail and the report form never wait for them.
       import type * as Leaflet from 'leaflet';
       import {
-        basemap, boundaryContains, boundsOf, cellCenter, cellContainsPosition, cellInZone, defaultCenter, defaultZoom, describeCell, formatDistance,
-        isH3Loaded, leadAnswer, loadH3, loadingMessage, providerLabel, providerOptions, serviceStyles, sortByProximity, summarizeCells, toCellBlobs, toPublicCells, toZones, zoneBounds,
+        areaRows, basemap, boundaryContains, boundsOf, cellContainsPosition, cellInZone, countAreas, dedupeRows, defaultCenter, defaultZoom, describeCell, formatDistance,
+        isH3Loaded, leadAnswer, loadH3, loadingMessage, positionCell, providerLabel, providerOptions, serviceStyles, sortByProximity, summarizeCells, toCellBlobs, toPublicCells, toZones, zoneBounds,
         type NearbyCell, type Provider, type PublicCell, type Service, type ZoneSummary,
       } from '../map.js';
       import { ONBOARDING_STORAGE_KEY, persistOnboardingStatus, shouldShowOnboarding } from '../onboarding.js';
-      import { onboardingSteps, locationSuccess, reportCopy, reportLocationError, siteNotice, unofficialNotice } from '../content.js';
-      import { mapControlLabels } from '../content.js';
+      import {
+        cellInfoTitle, coverageList, emptyDistrictState, emptyMapState, mapControlLabels, onboardingSteps, locationSuccess, outsideCoverageAnswer, ownReportLabel, reportCopy, reportLocationError, siteNotice, thanksMessage, unofficialNotice,
+      } from '../content.js';
       import { settleSheet, type SheetState } from '../sheet.js';
       import { formatFreshness } from '../freshness.js';
       import { startPolling } from '../polling.js';
       import { createSubmissionIds, fetchWithDeadline, isTimeout } from '../request.js';
-      import { createSafeStorage, getDeviceId, readCells, saveCells } from '../storage.js';
+      import { addOwnCell, createSafeStorage, getDeviceId, readCells, readOwnCells, saveCells } from '../storage.js';
 
       // Tells public/boot-watchdog.js (added on another branch) that the app script is running.
       document.documentElement.dataset.appBooted = '1';
@@ -233,6 +241,13 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
       const mapState = $<HTMLElement>('#map-state');
       const cellList = $<HTMLUListElement>('#cell-list');
       const legend = $<HTMLUListElement>('#map-legend');
+      const legendStates = $<HTMLUListElement>('#map-legend-states');
+      const filtersBox = $<HTMLDetailsElement>('#filters-box');
+      const filtersSummary = $<HTMLElement>('#filters-summary');
+      const coverageNote = $<HTMLElement>('#coverage-note');
+      const thanksText = $<HTMLElement>('#thanks-text');
+      const cellInfoTitleElement = $<HTMLElement>('#cell-info-title');
+      const replayIntro = $<HTMLButtonElement>('#replay-intro');
       const reportForm = $<HTMLFormElement>('#report-form');
       const reportState = $<HTMLElement>('#report-state');
       const locate = $<HTMLButtonElement>('#locate');
@@ -254,6 +269,8 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
       // A blocked localStorage must not take the app down: every access goes through this guard.
       const storage = createSafeStorage();
       const deviceId = getDeviceId(storage);
+      // Per tab: the cells this visit reported, so the list and the map can say "Tu reporte".
+      const sessionStore = createSafeStorage(() => sessionStorage);
       const submissionIds = createSubmissionIds();
 
       let map: Leaflet.Map | undefined;
@@ -262,6 +279,9 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
       let meMarker: Leaflet.Marker | undefined;
       let zones: ZoneSummary[] = [];
       let myDistrictSlug: string | undefined;
+      /** The visitor's position is known and sits outside every covered district. */
+      let outsideCoverage = false;
+      let sending = false;
       let painted: NearbyCell[] = [];
       let fetchedCells: PublicCell[] = [];
       let loadFailed = false;
@@ -312,10 +332,28 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
           if (myDistrictSlug && districtFilter) districtFilter.value = myDistrictSlug;
           // Re-centering is a personal action: fitting the whole district makes
           // the visitor's own position look remote again.
-          map.flyTo(origin, Math.max(map.getZoom(), 16), { animate: !prefersReducedMotion(), duration: .45 });
+          focusPoint(origin, Math.max(map.getZoom(), 16), true);
           return;
         }
         askPosition();
+      }
+
+      /** Room the panel over the map takes: the side rail from 56rem, the peeking sheet below it. */
+      function mapInset(): { paddingTopLeft: [number, number]; paddingBottomRight: [number, number] } {
+        if (matchMedia('(min-width: 56rem)').matches && rail) return { paddingTopLeft: [rail.offsetWidth + 48, 48], paddingBottomRight: [48, 48] };
+        // 9.6rem is the visible part of the sheet in `peek` (see `.rail[data-state='peek']`).
+        const peek = parseFloat(getComputedStyle(document.documentElement).fontSize) * 9.6;
+        return { paddingTopLeft: [24, 72], paddingBottomRight: [24, peek + 24] };
+      }
+
+      /** Puts a point in the middle of what is visible, not of the whole map element. */
+      function focusPoint(point: [number, number], zoom: number, fly = false): void {
+        if (!map) return;
+        const { paddingTopLeft: [left, top], paddingBottomRight: [right, bottom] } = mapInset();
+        const target = map.unproject(map.project(point, zoom).subtract(L.point((left - right) / 2, (top - bottom) / 2)), zoom);
+        const animate = !prefersReducedMotion();
+        if (fly) map.flyTo(target, zoom, { animate, duration: .45 });
+        else map.setView(target, zoom, { animate });
       }
 
       /**
@@ -356,6 +394,10 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
           addLocateControl(map);
           L.tileLayer(basemap.url, { attribution: basemap.attribution, maxZoom: basemap.maxZoom }).addTo(map);
           cellLayer = L.layerGroup().addTo(map);
+          // Past a city-wide view the glyphs shrink and pending ones step aside (see `.zoom-far`).
+          const markZoom = (): void => { if (map) map.getContainer().classList.toggle('zoom-far', map.getZoom() < 15); };
+          map.on('zoomend', markZoom);
+          markZoom();
         } catch { map = undefined; cellLayer = undefined; }
       }
 
@@ -368,8 +410,10 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
           item.innerHTML = `${icon(name)}<b>${style.label}</b>`;
           legend.append(item);
         }
+        // A second key on its own line: which service is one question, how sure we are is another.
         // Decodes the firmness the map and the list both draw: solid is a quorum, dashed is one claim.
-        legend.insertAdjacentHTML('beforeend', '<li class="legend-state"><span class="swatch" aria-hidden="true"></span>Confirmado</li><li class="legend-state"><span class="swatch dashed" aria-hidden="true"></span>Sin confirmar</li>');
+        legendStates?.replaceChildren();
+        legendStates?.insertAdjacentHTML('beforeend', '<li class="legend-state"><span class="swatch" aria-hidden="true"></span>Confirmado</li><li class="legend-state"><span class="swatch dashed" aria-hidden="true"></span>Sin confirmar</li>');
       }
 
       function renderProviderFields(): void {
@@ -421,32 +465,49 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
         painted = cells;
         if (!map || !cellLayer) return;
         cellLayer.clearLayers();
+        const own = readOwnCells(sessionStore);
+        // Two services in one place share a centre: one marker with the glyphs side by side, or one hides the other.
+        const glyphs = new Map<string, { centre: [number, number]; marks: { service: Service; confirmed: boolean }[] }>();
         for (const blob of toCellBlobs(cells)) {
           const style = serviceStyles[blob.service];
           // The API gives us the H3 cell, not the private report coordinate.
           // For the visitor's own cell, local positioning removes the visual
           // gap without transmitting or storing the precise location.
           const centre = origin && blob.h3Cells.length === 1 && cellContainsPosition(blob.h3Cells[0], origin) ? origin : blob.centre;
+          // Confidence is weight: a quorum is heavier and fuller than one dashed claim.
           const circle = L.circle(centre, {
             radius: blob.radiusMetres,
             color: style.stroke,
-            weight: blob.confirmed ? 2.5 : 2,
+            weight: blob.confirmed ? 3 : 2,
             dashArray: blob.confirmed ? undefined : '5 5',
             fillColor: style.fill,
-            fillOpacity: blob.confirmed ? .2 : .12,
-            className: 'cell',
+            fillOpacity: blob.confirmed ? .32 : .1,
+            className: blob.h3Cells.some((h3Cell) => own.has(h3Cell)) ? 'cell cell-mine' : 'cell',
           });
           circle.on('click', () => openCellInfo(blob.h3Cells, blob.service));
           circle.addTo(cellLayer);
-          // Colour never carries the service alone: a drawn glyph sits at the centre.
-          // A marker, not a vector, so the overlay pane still counts only the areas.
+          const key = centre.map((value) => value.toFixed(5)).join(',');
+          const group = glyphs.get(key) ?? { centre, marks: [] };
+          group.marks.push({ service: blob.service, confirmed: blob.confirmed });
+          glyphs.set(key, group);
+        }
+        // Colour never carries the service alone: a drawn glyph sits at the centre.
+        // A marker, not a vector, so the overlay pane still counts only the areas.
+        for (const { centre, marks } of glyphs.values()) {
           const glyph = L.marker(centre, {
-            icon: L.divIcon({ className: 'blob-glyph', html: icon(blob.service), iconSize: [24, 24] }),
+            icon: L.divIcon({
+              className: 'blob-glyph',
+              html: marks.map((mark) => `<span class="g ${mark.confirmed ? 'confirmed' : 'pending'}">${icon(mark.service)}</span>`).join(''),
+              iconSize: [24 * marks.length, 24],
+            }),
             interactive: false,
             keyboard: false,
           }).addTo(cellLayer);
-          const glyphElement = glyph.getElement();
-          if (glyphElement) glyphElement.style.color = style.ink;
+          // Styled through the CSSOM: the CSP forbids inline style attributes in markup.
+          glyph.getElement()?.querySelectorAll<HTMLElement>('.g').forEach((element, index) => {
+            const style = serviceStyles[marks[index]?.service ?? 'water'];
+            element.style.setProperty('--glyph', style.ink);
+          });
         }
         markMe();
       }
@@ -462,11 +523,24 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
       function showCellInfo(group: NearbyCell[], centre: [number, number], radiusMetres: number): void {
         if (!cellInfo || !cellInfoList || !cellInfoStreets) return;
         cellInfoList.replaceChildren();
-        for (const cell of group) {
+        if (cellInfoTitleElement) cellInfoTitleElement.textContent = cellInfoTitle(group.every((cell) => cell.confirmed));
+        // A merged area holds several cells: one row per service, company and state.
+        for (const cell of dedupeRows(group)) {
           const style = serviceStyles[cell.service];
           const item = document.createElement('li');
           item.style.setProperty('--ink', style.ink);
           item.innerHTML = `${icon(cell.service)}<span>${style.label}<small>${providerLabel(cell.provider)}</small></span><em>${cell.confirmed ? 'Confirmado' : 'Sin confirmar'}</em>`;
+          // Outside the covered districts a report would be refused, so none is offered.
+          if (!outsideCoverage) {
+            const actions = document.createElement('div');
+            actions.className = 'cell-info-actions';
+            const send = (status: 'outage' | 'restored') => () => {
+              cellInfo.close();
+              sendReport([cell.service], { [cell.service]: cell.provider }, status, true);
+            };
+            actions.append(stateButton('', 'También me pasa', send('outage')), stateButton('', 'Ya volvió aquí', send('restored')));
+            item.append(actions);
+          }
           cellInfoList.append(item);
         }
         // Street names inside a small radius would point at a lone reporter's block,
@@ -492,7 +566,7 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
             return;
           }
           const title = document.createElement('strong');
-          title.textContent = 'Calles en la zona (aproximado)';
+          title.textContent = 'Calles en esta área (aproximado)';
           const list = document.createElement('ul');
           for (const street of streets) {
             const item = document.createElement('li');
@@ -554,24 +628,19 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
         return button;
       }
 
-      /** One row per drawn area, the same grouping the map uses; an unmappable index still lists as text. */
-      function listRows(cells: NearbyCell[]): { service: Service; provider: Provider; confirmed: boolean; h3Cells: string[]; centre?: [number, number]; metres?: number }[] {
-        const areas = toCellBlobs(cells).map((blob) => {
-          const distances = cells
-            .filter((cell) => cell.service === blob.service && cell.provider === blob.provider && blob.h3Cells.includes(cell.h3Cell))
-            .flatMap((cell) => (cell.metres === undefined ? [] : [cell.metres]));
-          return { service: blob.service, provider: blob.provider, confirmed: blob.confirmed, h3Cells: blob.h3Cells, centre: blob.centre, metres: distances.length > 0 ? Math.min(...distances) : undefined };
-        });
-        const unmapped = cells
-          .filter((cell) => !cellCenter(cell.h3Cell))
-          .map((cell) => ({ service: cell.service, provider: cell.provider, confirmed: cell.confirmed, h3Cells: [cell.h3Cell], centre: undefined, metres: cell.metres }));
-        return [...areas, ...unmapped];
-      }
-
-      function renderList(cells: NearbyCell[]): void {
+      /**
+       * `scoped` is the list before the district filter: when a district is empty it
+       * says how much is reported elsewhere instead of reading as "no outages anywhere".
+       */
+      function renderList(cells: NearbyCell[], scoped: NearbyCell[]): void {
         if (!cellList || !mapState) return;
         cellList.replaceChildren();
         mapState.removeAttribute('data-tone');
+        // With nothing reported at all there is nothing to narrow down.
+        if (filtersBox) filtersBox.hidden = fetchedCells.length === 0;
+        const own = readOwnCells(sessionStore);
+        const coverage = zones.map((zone) => zone.name);
+        const rows = areaRows(cells);
         if (loadFailed && lastLoadedAt === undefined) {
           // A failed load must never read as "no outages": say so, and offer the retry.
           // Nothing was ever loaded, so there is nothing on screen that could be out of date.
@@ -580,46 +649,88 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
           mapState.textContent = reportCopy.loadFailedState;
           mapState.append(stateButton('retry', 'Reintentar', () => { void loadCells(); }));
         } else {
-          if (answer) answer.textContent = leadAnswer(cells);
-          let action: HTMLButtonElement | undefined;
+          if (answer) {
+            answer.textContent = outsideCoverage ? outsideCoverageAnswer : leadAnswer(cells);
+            // The next useful step is offered, not just named.
+            if (!origin && cells.length > 0) {
+              const locateButton = stateButton('answer-locate', '', () => askPosition());
+              locateButton.innerHTML = `${locateGlyph}<span>Ver lo más cerca de mí</span>`;
+              answer.append(locateButton);
+            }
+          }
+          const actions: HTMLButtonElement[] = [];
+          const elsewhere = currentDistrict() !== 'all' && cells.length === 0 ? areaRows(scoped).length : 0;
           if (loadFailed) {
             // The last good data stays on screen; only the message says it may be behind.
             mapState.dataset.tone = 'error';
             mapState.textContent = reportCopy.stale;
-            action = stateButton('retry', 'Reintentar', () => { void loadCells(); });
+            actions.push(stateButton('retry', 'Reintentar', () => { void loadCells(); }));
           } else if (cells.length > 0) {
-            const confirmedCount = cells.filter((cell) => cell.confirmed).length;
-            mapState.textContent = summarizeCells(confirmedCount, cells.length - confirmedCount);
+            const { confirmed, pending } = countAreas(cells);
+            mapState.textContent = summarizeCells(confirmed, pending);
+          } else if (elsewhere > 0) {
+            const district = zones.find((zone) => zone.slug === currentDistrict())?.name ?? '';
+            mapState.textContent = emptyDistrictState(district, elsewhere);
+            actions.push(
+              stateButton('empty-cta', 'Ver todos los distritos', () => { if (districtFilter) districtFilter.value = 'all'; render(); }),
+              stateButton('empty-cta', 'Reportar un corte', goToReport),
+            );
           } else if (fetchedCells.length > 0) {
             mapState.textContent = summarizeCells(0, 0);
           } else {
-            const district = zones.find((zone) => zone.slug === currentDistrict())?.name ?? 'la zona piloto';
-            mapState.textContent = `Nadie ha reportado cortes en ${district}. Si se fue el servicio en tu casa, repórtalo: así sabrás si es solo tu casa.`;
-            action = stateButton('empty-cta', 'Reportar un corte', goToReport);
+            const district = zones.find((zone) => zone.slug === currentDistrict())?.name;
+            mapState.textContent = emptyMapState(district, outsideCoverage ? [] : coverage);
+            actions.push(stateButton('empty-cta', 'Reportar un corte', goToReport));
           }
+          if (outsideCoverage && !loadFailed) mapState.append(` ${coverageList(coverage)}`);
           if (lastLoadedAt !== undefined) {
             const freshness = document.createElement('span');
             freshness.dataset.freshness = '';
             freshness.textContent = ` ${formatFreshness(lastLoadedAt, Date.now())}.`;
             mapState.append(freshness);
           }
-          if (action) mapState.append(action);
+          mapState.append(...actions);
         }
-        for (const row of listRows(cells)) {
+        for (const row of rows) {
           const item = document.createElement('li');
           item.style.setProperty('--ink', serviceStyles[row.service].ink);
           const button = document.createElement('button');
           button.type = 'button';
           button.className = row.confirmed ? 'cell-row' : 'cell-row pending';
           const distance = row.metres === undefined ? '' : `<em>${formatDistance(row.metres)}</em>`;
-          button.innerHTML = `${icon(row.service)}<span>${describeCell(row.service, row.confirmed)}<small>${providerLabel(row.provider)}</small></span>${distance}`;
+          const mine = !row.confirmed && row.h3Cells.some((h3Cell) => own.has(h3Cell));
+          button.innerHTML = `${icon(row.service)}<span>${mine ? ownReportLabel : describeCell(row.service, row.confirmed)}<small>${providerLabel(row.provider)}</small></span>${distance}`;
           button.addEventListener('click', () => {
-            if (row.centre && map) map.setView(row.centre, Math.max(map.getZoom(), 15), { animate: !prefersReducedMotion() });
+            // On a phone the open sheet covers the map this tap is about to move.
+            if (railBody?.dataset.tabs === 'on') setRail('peek');
+            if (row.centre) focusPoint(row.centre, Math.max(map?.getZoom() ?? 0, 15));
             openCellInfo(row.h3Cells, row.service);
           });
           item.append(button);
           cellList.append(item);
         }
+        updateFiltersSummary();
+      }
+
+      /** The closed filters still say what is selected, so a narrowed list never looks complete. */
+      function updateFiltersSummary(): void {
+        if (!filtersSummary) return;
+        const chosen = [districtFilter, filter, providerFilter]
+          .flatMap((select) => (select && select.value !== 'all' ? [select.selectedOptions[0]?.textContent ?? ''] : []));
+        filtersSummary.textContent = chosen.length > 0 ? `Filtrar (${chosen.join(' · ')})` : 'Filtrar (distrito, servicio, empresa)';
+      }
+
+      /** Outside every covered district a report would be refused: say so first and keep the form from sending. */
+      function updateCoverage(): void {
+        outsideCoverage = origin !== undefined && myDistrictSlug === undefined && zones.length > 0;
+        if (coverageNote) {
+          coverageNote.hidden = !outsideCoverage;
+          coverageNote.textContent = outsideCoverage ? `${outsideCoverageAnswer} ${coverageList(zones.map((zone) => zone.name))}` : '';
+        }
+        if (!submit) return;
+        submit.disabled = outsideCoverage || sending;
+        if (outsideCoverage) submit.setAttribute('aria-describedby', 'coverage-note');
+        else submit.removeAttribute('aria-describedby');
       }
 
       async function loadCells(silent = false): Promise<void> {
@@ -679,15 +790,15 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
         if (zone) {
           const box = L.latLngBounds(zoneBounds(zone.boundary));
           if (origin && slug === myDistrictSlug) box.extend(origin);
-          map.fitBounds(box, { padding: [48, 48], maxZoom: 15, animate: !prefersReducedMotion() });
+          map.fitBounds(box, { ...mapInset(), maxZoom: 15, animate: !prefersReducedMotion() });
           return;
         }
         const bounds = boundsOf(toCellBlobs(painted));
         if (bounds) {
           const box = L.latLngBounds(bounds);
           if (origin) box.extend(origin);
-          map.fitBounds(box, { padding: [48, 48], maxZoom: 15, animate: !prefersReducedMotion() });
-        } else if (origin) map.setView(origin, 15, { animate: !prefersReducedMotion() });
+          map.fitBounds(box, { ...mapInset(), maxZoom: 15, animate: !prefersReducedMotion() });
+        } else if (origin) focusPoint(origin, 15);
       }
 
       function filterByService(cells: NearbyCell[]): NearbyCell[] {
@@ -699,8 +810,9 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
         // Areas and distances need h3-js; until it arrives only an empty result can be drawn.
         if (!isH3Loaded() && fetchedCells.length > 0) return;
         const ordered = sortByProximity(fetchedCells, origin);
-        const filtered = filterByProvider(filterByDistrict(filterByService(ordered)));
-        renderList(filtered);
+        const scoped = filterByProvider(filterByService(ordered));
+        const filtered = filterByDistrict(scoped);
+        renderList(filtered, scoped);
         renderCells(filtered);
         if (center) applyDistrict();
       }
@@ -715,9 +827,11 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
         if (here) {
           myDistrictSlug = zones.find((zone) => boundaryContains(zone.boundary, here[0], here[1]))?.slug;
           if (myDistrictSlug && districtFilter && districtFilter.value === 'all') districtFilter.value = myDistrictSlug;
-          render(false);
-          centreOnMe();
         }
+        updateCoverage();
+        // The district names belong in the empty state, but never before the first answer: that would read as "nothing reported".
+        if (here || lastLoadedAt !== undefined) render(false);
+        if (here) centreOnMe();
       }
 
       function populateDistrictFilter(): void {
@@ -751,6 +865,7 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
             origin = [position.coords.latitude, position.coords.longitude];
             myDistrictSlug = zones.find((zone) => boundaryContains(zone.boundary, position.coords.latitude, position.coords.longitude))?.slug;
             if (myDistrictSlug && districtFilter) districtFilter.value = myDistrictSlug;
+            updateCoverage();
             locate?.setAttribute('hidden', '');
             locate?.removeAttribute('data-busy');
             onSuccess?.();
@@ -1320,11 +1435,12 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
         window.setTimeout(finish, ONBOARDING_FADE_MS);
       }
 
-      function startOnboarding(): void {
-        if (!onboarding) return;
+      /** `force` replays the steps for a returning visitor; closing still persists as usual. */
+      function startOnboarding(force = false): void {
+        if (!onboarding || !onboarding.hidden) return;
         let stored: string | null = null;
         try { stored = localStorage.getItem(ONBOARDING_STORAGE_KEY); } catch { stored = null; }
-        if (!shouldShowOnboarding(stored)) return;
+        if (!force && !shouldShowOnboarding(stored)) return;
         buildOnboarding();
         onboardingFocusReturn = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         onboarding.hidden = false;
@@ -1358,6 +1474,14 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
 
       grip?.addEventListener('click', () => setRail(rail?.getAttribute('data-state') === 'open' ? 'peek' : 'open'));
       locate?.addEventListener('click', () => askPosition());
+      replayIntro?.addEventListener('click', () => { setIdentityExpanded(false); startOnboarding(true); });
+      // Filters are rarely needed with a handful of areas: closed on a phone, open on the side rail.
+      if (filtersBox) {
+        const wideRail = matchMedia('(min-width: 56rem)');
+        const syncFilters = (): void => { filtersBox.open = wideRail.matches; };
+        syncFilters();
+        wideRail.addEventListener('change', syncFilters);
+      }
       filter?.addEventListener('change', () => { populateProviderFilter(); render(); });
       providerFilter?.addEventListener('change', () => render());
       districtFilter?.addEventListener('change', () => render());
@@ -1396,16 +1520,31 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
           missing[0]?.focus();
           return;
         }
-        if (!navigator.geolocation) { reportState.dataset.tone = 'error'; reportState.textContent = 'No podemos obtener tu ubicación. Prueba desde un navegador que permita el acceso.'; return; }
+        sendReport(services, providers, reportForm.querySelector<HTMLInputElement>('input[name="status"]:checked')?.value);
+      });
+
+      /**
+       * The one path that sends a report: the form and the area dialog both end here,
+       * with the position asked the same way. `quick` (from the dialog) has no form
+       * on screen, so a failure brings the visitor to the message.
+       */
+      function sendReport(services: Service[], providers: Record<string, string>, status: string | undefined, quick = false): void {
+        if (!reportForm || !reportState || !submit || sending || outsideCoverage) return;
+        const say = (tone: string, text: string): void => {
+          reportState.dataset.tone = tone;
+          reportState.textContent = text;
+          if (quick && (tone === 'error' || tone === 'warn')) goToReport();
+        };
+        if (!navigator.geolocation) { say('error', 'No podemos obtener tu ubicación. Prueba desde un navegador que permita el acceso.'); return; }
         // Interim states ("asking for the location", "sending") live on the button: a live region would interrupt the reader with each one.
         reportState.textContent = '';
         submit.textContent = 'Solicitando ubicación…';
         navigator.geolocation.getCurrentPosition(async (position) => {
-          if (submit.disabled) return;
+          if (sending) return;
+          sending = true;
           submit.disabled = true;
           submit.textContent = 'Enviando…';
           try {
-            const status = reportForm.querySelector<HTMLInputElement>('input[name="status"]:checked')?.value;
             // A retry after a lost response reuses the id, so the server can recognise it as the same report.
             const submissionId = submissionIds.idFor(JSON.stringify({ services, providers, status }));
             const response = await fetchWithDeadline('/v1/reports', {
@@ -1418,30 +1557,46 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
             if (response.ok) {
               reportState.dataset.tone = 'success';
               reportState.textContent = '';
-              reportForm.reset();
-              renderProviderFields();
-              thanks?.showModal();
-              void loadCells(true);
+              if (!quick) { reportForm.reset(); renderProviderFields(); }
+              showReportLanding([position.coords.latitude, position.coords.longitude], status);
             } else if (response.status === 409) {
-              reportState.dataset.tone = 'warn';
-              reportState.textContent = 'Ya enviaste este reporte hace menos de una hora. Podrás repetirlo más tarde.';
+              say('warn', 'Ya enviaste este reporte hace menos de una hora. Podrás repetirlo más tarde.');
             } else {
-              reportState.dataset.tone = 'error';
-              reportState.textContent = 'No pudimos enviar tu reporte ahora. Vuelve a intentarlo más tarde.';
+              say('error', 'No pudimos enviar tu reporte ahora. Vuelve a intentarlo más tarde.');
             }
           } catch (error) {
-            reportState.dataset.tone = 'error';
-            reportState.textContent = isTimeout(error) ? reportCopy.timeout : 'No pudimos enviar tu reporte. Revisa tu conexión e inténtalo de nuevo.';
+            say('error', isTimeout(error) ? reportCopy.timeout : 'No pudimos enviar tu reporte. Revisa tu conexión e inténtalo de nuevo.');
           } finally {
-            submit.disabled = false;
+            sending = false;
             submit.textContent = 'Enviar reporte';
+            updateCoverage();
           }
         }, (error) => {
           submit.textContent = 'Enviar reporte';
-          reportState.dataset.tone = 'error';
-          reportState.textContent = reportLocationError(error.code);
+          say('error', reportLocationError(error.code));
         }, { timeout: 10_000, maximumAge: 60_000 });
-      });
+      }
+
+      /**
+       * The reward for reporting is seeing it land. The position the browser just
+       * shared stays here (never stored), so the map can show the visitor, put the
+       * new area in view once the thank-you closes, and mark it as theirs.
+       */
+      function showReportLanding(here: [number, number], status: string | undefined): void {
+        origin = here;
+        myDistrictSlug = zones.find((zone) => boundaryContains(zone.boundary, here[0], here[1]))?.slug;
+        if (myDistrictSlug && districtFilter) districtFilter.value = myDistrictSlug;
+        if (status === 'outage' && isH3Loaded()) {
+          try { addOwnCell(sessionStore, positionCell(here, fetchedCells[0]?.h3Cell)); } catch { /* the area is simply not marked as theirs */ }
+        }
+        updateCoverage();
+        render(false);
+        void loadCells(true);
+        if (thanksText) thanksText.textContent = thanksMessage(status);
+        thanks?.addEventListener('close', () => { setRail('peek'); centreOnMe(); }, { once: true });
+        thanks?.showModal();
+      }
+
       reportForm?.querySelectorAll<HTMLInputElement>('input[name="services"]').forEach((input) => input.addEventListener('change', () => reportForm?.querySelector('fieldset')?.removeAttribute('aria-describedby')));
       // The button that had focus is disabled while sending, so the dialog cannot hand focus back to it: land on the answer line, which names the new report.
       thanks?.addEventListener('close', () => answer?.focus({ preventScroll: true }));
@@ -1530,6 +1685,8 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
       .leaflet-container .leaflet-top { top: var(--notice-clearance, .625rem); }
       /* One shadow on the whole overlay pane, not one filter per drawn area. */
       .leaflet-overlay-pane { filter: drop-shadow(0 1px 5px rgb(22 32 26 / .28)); }
+      /* "Tu reporte": a dark ring around the area this visit reported. A halo, not a second path: the overlay pane counts areas. The pane already carries the shadow. */
+      .cell.cell-mine { filter: drop-shadow(0 0 1px var(--ink)) drop-shadow(0 0 1px var(--ink)); }
 
       /* Opaque surfaces: a backdrop blur over the tiles recomposes on every pan and zoom frame. */
       .leaflet-container .leaflet-control-zoom a,
@@ -1554,11 +1711,18 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
       }
 
       /* A drawn glyph at each area's centre, so the service is never colour alone. */
-      .blob-glyph {
-        display: grid; place-items: center; border-radius: 99px;
-        background: var(--surface); box-shadow: 0 1px 4px rgb(22 32 26 / .3);
+      .blob-glyph { display: flex; align-items: center; justify-content: center; }
+      .blob-glyph .g {
+        display: grid; place-items: center; flex: none; width: 24px; height: 24px; border-radius: 99px;
+        background: var(--surface); color: var(--glyph, var(--ink)); box-shadow: 0 1px 4px rgb(22 32 26 / .3);
       }
+      /* A confirmed area gets the filled disc and a white glyph; a pending one keeps the outline glyph on pale ground. */
+      .blob-glyph .g.confirmed { background: var(--glyph, var(--ink)); color: #fff; }
       .blob-glyph svg { width: 15px; height: 15px; }
+      /* City view: the glyphs are bigger than the areas they mark, so they shrink and pending ones step aside. */
+      .zoom-far .blob-glyph .g { width: 16px; height: 16px; }
+      .zoom-far .blob-glyph svg { width: 10px; height: 10px; }
+      .zoom-far .blob-glyph .g.pending { display: none; }
       .leaflet-tooltip-top::before { border-top-color: var(--line); }
 
       /* You, on the map. A div, never a vector: the overlay pane counts hexagons. */
@@ -1602,6 +1766,13 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
       /* Grows the tap area past 44px without growing the visible pill. */
       .identity-toggle::after { content: ''; position: absolute; inset: -8px -4px; }
       .identity-toggle svg { width: 15px; height: 15px; flex: none; color: var(--ink); }
+      /* The site name shows beside the marker only where there is room for it (from 56rem). */
+      .identity-name { display: none; font-family: Comfortaa, 'Nunito Variable', sans-serif; font-weight: 700; }
+      .identity-name::after { content: '·'; margin-left: .32rem; color: var(--muted); }
+      .plate-link {
+        padding: .3rem 0; border: 0; background: none; color: var(--agua);
+        font: inherit; font-size: .84rem; font-weight: 800; text-decoration: underline; cursor: pointer;
+      }
       .identity-toggle[aria-expanded='true'] { color: var(--ink); border-color: var(--muted); }
 
       /* The expanded panel: the wordmark and the full unofficial naming. */
@@ -1861,6 +2032,11 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
       .cell-info-list li > span { font-weight: 800; }
       .cell-info-list li > span small { display: block; margin-top: .12rem; color: var(--muted); font-size: .72rem; font-weight: 600; }
       .cell-info-list em { color: var(--muted); font-style: normal; font-size: .78rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .cell-info-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: .4rem; }
+      #cell-info .cell-info-actions button {
+        width: auto; flex: 1 1 auto; min-height: 44px; padding: .5rem .8rem; font-size: .84rem;
+        color: var(--agua); background: #fff; border: 1.5px solid var(--agua);
+      }
       .cell-info-streets { margin: 0 0 1rem; color: var(--muted); font-size: .85rem; line-height: 1.5; }
       .cell-info-streets strong { color: var(--ink); font-weight: 800; }
       .cell-info-streets ul { margin: .35rem 0 0; padding-left: 1.1rem; }
@@ -1985,10 +2161,25 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
       }
       .legend svg { width: 15px; height: 15px; color: var(--ink); }
       .legend b { font-weight: 800; }
-      /* Firmness key: plain inline items, not a third set of white pills. */
+      /* Firmness key on its own line: plain inline items, not a third set of white pills. */
+      #map-legend { margin-top: 1rem; }
+      .legend.legend-states { margin-top: -.75rem; }
       .legend li.legend-state { padding: .3rem .15rem; border: 0; background: none; color: var(--muted); }
-      .swatch { width: 14px; height: 14px; border-radius: 99px; border: 2px solid var(--muted); background: rgb(84 101 91 / .18); }
+      /* The same weights the map draws: a solid disc for a quorum, a dashed outline for one claim. */
+      .swatch { width: 14px; height: 14px; border-radius: 99px; border: 2px solid var(--muted); background: var(--muted); }
       .swatch.dashed { border-style: dashed; background: transparent; }
+
+      /* Closed on a phone: the list is the content of this tab, the filters are the exception. */
+      .filters-box { margin: 0 0 .9rem; }
+      .filters-box[hidden] { display: none; }
+      .filters-box > summary { min-height: 44px; display: flex; align-items: center; color: var(--agua); font-size: .85rem; font-weight: 800; cursor: pointer; }
+      .filters-box .filters { margin-top: .3rem; }
+      .answer .answer-locate {
+        display: flex; align-items: center; gap: .4rem; min-height: 44px; margin-top: .1rem; padding: 0;
+        border: 0; background: none; color: var(--agua); font: inherit; font-size: .9rem; font-weight: 800; cursor: pointer;
+      }
+      .answer .answer-locate svg { width: 16px; height: 16px; flex: none; }
+      .answer .answer-locate span { text-decoration: underline; }
 
       .panel { padding-top: 1.15rem; border-top: 1px solid var(--line); }
       .panel + .panel { margin-top: 1.15rem; }
@@ -2087,6 +2278,7 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
          * `watchRailTabs` drops the matching ARIA so the two agree. */
         .rail-tabs { display: none; }
         .identity { left: 26.5rem; }
+        .identity-name { display: inline; }
         /*
          * Desktop composition: the same owned viewport, laid out as a
          * two-column editorial spread — large illustration on the left,
@@ -2148,6 +2340,7 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
         .onboarding-activate:hover { background: #F1F8FC; }
         .onboarding-ghost:hover { border-color: var(--muted); }
         .onboarding-primary:hover, #thanks button:hover, #cell-info button:hover, #submit:hover { background: #0B120E; }
+        #cell-info .cell-info-actions button:hover { background: #F1F8FC; }
         .grip:hover { color: var(--ink); }
         #map-state .retry:hover, #map-state .empty-cta:hover { background: #F1F8FC; }
         .locate:hover { border-color: var(--agua); background: #F1F8FC; }

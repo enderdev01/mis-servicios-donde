@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { cellsCacheMaxAgeMs, createSafeStorage, getDeviceId, readCells, saveCells, type StorageLike } from './storage.js';
+import { addOwnCell, cellsCacheMaxAgeMs, createSafeStorage, getDeviceId, readCells, readOwnCells, saveCells, type StorageLike } from './storage.js';
 
 function memory(): StorageLike & { data: Map<string, string> } {
   const data = new Map<string, string>();
@@ -9,6 +9,25 @@ function memory(): StorageLike & { data: Map<string, string> } {
 
 const blocked = (): StorageLike => { throw new DOMException('The operation is insecure.', 'SecurityError'); };
 const cell = { h3Cell: '8999999999fffff', service: 'water' as const, provider: 'sedapal' as const, confirmed: true };
+
+describe('own reports', () => {
+  it('remembers the cells reported this visit without duplicates', () => {
+    const backing = memory();
+    const store = createSafeStorage(() => backing);
+    expect([...readOwnCells(store)]).toEqual([]);
+    addOwnCell(store, 'a');
+    addOwnCell(store, 'b');
+    addOwnCell(store, 'a');
+    expect([...readOwnCells(store)]).toEqual(['a', 'b']);
+  });
+
+  it('reads as empty when the stored value is garbage or the store is blocked', () => {
+    const backing = memory();
+    backing.setItem('mis-servicios:own-reports', '{oops');
+    expect(readOwnCells(createSafeStorage(() => backing)).size).toBe(0);
+    expect(readOwnCells(createSafeStorage(blocked)).size).toBe(0);
+  });
+});
 
 describe('safe storage', () => {
   it('reads and writes through a working store', () => {

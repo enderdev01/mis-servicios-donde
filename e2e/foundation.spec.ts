@@ -11,7 +11,7 @@ test('offers an unofficial filtered map and accessible report validation', async
   // Returning-user state: this spec exercises the map and panel, not the first run.
   await asReturningVisitor(page);
   // The service filter narrows one full response in the browser: no per-service request exists.
-  await page.route('**/v1/cells', (route) => route.fulfill({ json: [{ h3Cell: '8999999999fffff', service: 'water', provider: 'sedapal', confirmed: true, reports: 3 }] }));
+  await page.route('**/v1/cells', (route) => route.fulfill({ json: [{ h3Cell: '8999999999fffff', service: 'water', provider: 'sedapal', confirmed: true }] }));
   await page.goto('/');
 
   await expect(page.getByRole('heading', { name: '¿Es solo tu casa?' })).toBeVisible();
@@ -22,11 +22,11 @@ test('offers an unofficial filtered map and accessible report validation', async
 
   await page.getByLabel('Ver servicio').selectOption('electricity');
   await expect(page.getByRole('status')).toContainText('No hay cortes reportados en este momento.');
-  await expect(page.getByLabel('Cortes confirmados por zona')).toBeEmpty();
+  await expect(page.getByLabel('Cortes reportados por área')).toBeEmpty();
 
   await page.getByLabel('Ver servicio').selectOption('water');
   await expect(page.getByRole('status')).toContainText('1 confirmado.');
-  await expect(page.getByLabel('Cortes confirmados por zona')).toContainText('Corte de agua confirmado');
+  await expect(page.getByLabel('Cortes reportados por área')).toContainText('Corte de agua confirmado');
 
   await page.getByRole('button', { name: 'Enviar reporte' }).click();
   await expect(page.locator('#report-state')).toContainText('Elige al menos un servicio afectado.');

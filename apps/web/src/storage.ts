@@ -49,6 +49,22 @@ export function saveCells(store: SafeStorage, cells: PublicCell[], at: number): 
   store.set(cellsKey, JSON.stringify({ at, cells }));
 }
 
+const ownReportsKey = 'mis-servicios:own-reports';
+
+/** The H3 cells this visit reported an outage in. Per-tab storage: it never outlives the visit. */
+export function readOwnCells(store: SafeStorage): Set<string> {
+  try {
+    const parsed: unknown = JSON.parse(store.get(ownReportsKey) ?? '[]');
+    return new Set(Array.isArray(parsed) ? parsed.filter((cell): cell is string => typeof cell === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function addOwnCell(store: SafeStorage, h3Cell: string): void {
+  store.set(ownReportsKey, JSON.stringify([...readOwnCells(store), h3Cell]));
+}
+
 export function readCells(store: SafeStorage, now: number): CachedCells | undefined {
   const raw = store.get(cellsKey);
   if (!raw) return undefined;

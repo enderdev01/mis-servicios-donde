@@ -1,6 +1,39 @@
 import { describe, expect, it } from 'vitest';
 
-import { locationSuccess, onboardingSteps, reportLocationError, siteNotice, unofficialNotice } from './content.js';
+import { cellInfoTitle, coverageList, emptyDistrictState, emptyMapState, locationSuccess, mapLabel, onboardingSteps, reportLocationError, siteNotice, thanksMessage, unofficialNotice } from './content.js';
+
+describe('answer copy', () => {
+  it('titles a dialog with unconfirmed reports as reports, not outages', () => {
+    expect(cellInfoTitle(true)).toBe('Cortes en esta área');
+    expect(cellInfoTitle(false)).toBe('Reportes en esta área');
+  });
+
+  it('labels the map as showing unconfirmed reports too', () => {
+    expect(mapLabel).toContain('reportes sin confirmar');
+    expect(mapLabel).not.toContain('confirmados');
+  });
+
+  it('promises the unconfirmed area only for an outage report', () => {
+    expect(thanksMessage('outage')).toContain('«sin confirmar»');
+    expect(thanksMessage('restored')).not.toContain('sin confirmar');
+    expect(thanksMessage('restored')).toContain('volvió');
+  });
+
+  it('names the covered districts, never the team words', () => {
+    expect(coverageList(['Breña', 'Rímac'])).toBe('Distritos con cobertura: Breña, Rímac.');
+    expect(coverageList([])).toBe('');
+    expect(emptyMapState(undefined, [])).toContain('los distritos con cobertura');
+    expect(emptyMapState('Breña', ['Breña', 'Rímac'])).toMatch(/^Nadie ha reportado cortes en Breña\./);
+    for (const text of [emptyMapState(undefined, ['Breña']), thanksMessage('outage'), cellInfoTitle(false)]) {
+      expect(text.toLowerCase()).not.toMatch(/piloto|zona/);
+    }
+  });
+
+  it('says where the other areas are when the chosen district is empty', () => {
+    expect(emptyDistrictState('San Juan de Lurigancho', 5)).toBe('Nadie ha reportado cortes en San Juan de Lurigancho. Hay 5 áreas con reportes en otros distritos.');
+    expect(emptyDistrictState('Breña', 1)).toContain('Hay 1 área con reportes');
+  });
+});
 
 describe('report location errors', () => {
   it('only asks for the permission when it was denied', () => {
@@ -62,13 +95,14 @@ describe('onboarding steps', () => {
     expect(text).not.toContain('nunca sale de tu navegador');
   });
 
-  it('explains consensus, the hourly repeat limit and the pilot-zone restriction', () => {
+  it('explains consensus, the hourly repeat limit and the covered-district restriction', () => {
     const publication = onboardingSteps[3];
     const text = `${publication?.title} ${publication?.body}`.toLowerCase();
     expect(text).toContain('sin confirmar');
     expect(text).toContain('tres vecinos');
     expect(text).toContain('cada hora');
-    expect(text).toContain('zonas piloto');
+    expect(text).toContain('distritos donde funciona el mapa');
+    expect(text).not.toContain('piloto');
   });
 
   it('never exposes report counts as product claims', () => {

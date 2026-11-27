@@ -57,7 +57,7 @@ test('walks a first visit through four illustrated steps', async ({ page }) => {
   await expect(onboarding.locator('.onboarding-body')).toContainText('sin confirmar');
   await expect(onboarding.locator('.onboarding-body')).toContainText('tres vecinos distintos');
   await expect(onboarding.locator('.onboarding-body')).toContainText('cada hora');
-  await expect(onboarding.locator('.onboarding-body')).toContainText('zonas piloto');
+  await expect(onboarding.locator('.onboarding-body')).toContainText('distritos donde funciona el mapa');
 });
 
 test('fades between steps and still lands on every step with rapid clicks', async ({ page }) => {
@@ -320,7 +320,7 @@ test('falls back to a usable map when location is denied', async ({ page }) => {
   await assertNoInternalScroll(page, 'the location step after a denial');
 
   // Denial never takes the map down: the aggregate still loads as text.
-  await expect(page.locator('#map-state')).toContainText('Nadie ha reportado cortes en la zona piloto.');
+  await expect(page.locator('#map-state')).toContainText('Nadie ha reportado cortes en los distritos con cobertura.');
 
   await onboarding.getByRole('button', { name: 'Siguiente' }).click();
   await expect(onboarding.locator('.onboarding-progress')).toContainText('Paso 3 de 4');
@@ -371,7 +371,7 @@ test('finishes on the last tap when the steps are tapped faster than the fade', 
   for (let tap = 0; tap < 4; tap += 1) await card.getByRole('button').last().click();
 
   await expect(onboarding).toBeHidden();
-  await expect(page.getByRole('status')).toContainText('Nadie ha reportado cortes en la zona piloto.');
+  await expect(page.getByRole('status')).toContainText('Nadie ha reportado cortes en los distritos con cobertura.');
   // Completion is what persisted, so the map is not re-covered on the next visit.
   await page.reload();
   await expect(page.getByRole('region', { name: 'Introducción al mapa comunitario' })).toBeHidden();
@@ -407,7 +407,7 @@ test('closes with Escape and keeps the map useful after skipping', async ({ page
   await expect(onboarding).toBeHidden();
   await expect(page.getByRole('heading', { name: '¿Es solo tu casa?' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Enviar reporte' })).toBeVisible();
-  await expect(page.getByRole('status')).toContainText('Nadie ha reportado cortes en la zona piloto.');
+  await expect(page.getByRole('status')).toContainText('Nadie ha reportado cortes en los distritos con cobertura.');
 });
 
 /**
@@ -658,7 +658,7 @@ for (const [width, height] of [[1440, 900], [900, 844]] as const) {
     await page.reload();
     await expect(onboarding).toBeHidden();
     // The map is usable right after the first visit ends.
-    await expect(page.getByRole('status')).toContainText('Nadie ha reportado cortes en la zona piloto.');
+    await expect(page.getByRole('status')).toContainText('Nadie ha reportado cortes en los distritos con cobertura.');
   });
 }
 

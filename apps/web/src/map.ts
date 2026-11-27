@@ -339,15 +339,83 @@ function measure(h3Cell: string, origin: [number, number]): number | undefined {
   return centre ? distanceMetres(origin, centre) : undefined;
 }
 
-/** The one line worth reading before anything is expanded. */
+export interface AreaRow {
+  service: Service;
+  provider: Provider;
+  confirmed: boolean;
+  h3Cells: string[];
+  centre?: [number, number];
+  metres?: number;
+}
+
+/** One row per drawn area, the same grouping the map uses; an unmappable index still rows as text. */
+export function areaRows(cells: NearbyCell[]): AreaRow[] {
+  const areas = toCellBlobs(cells).map((blob) => {
+    const distances = cells
+      .filter((cell) => cell.service === blob.service && cell.provider === blob.provider && blob.h3Cells.includes(cell.h3Cell))
+      .flatMap((cell) => (cell.metres === undefined ? [] : [cell.metres]));
+    return { service: blob.service, provider: blob.provider, confirmed: blob.confirmed, h3Cells: blob.h3Cells, centre: blob.centre, metres: distances.length > 0 ? Math.min(...distances) : undefined };
+  });
+  const unmapped = cells
+    .filter((cell) => !cellCenter(cell.h3Cell))
+    .map((cell) => ({ service: cell.service, provider: cell.provider, confirmed: cell.confirmed, h3Cells: [cell.h3Cell], centre: undefined, metres: cell.metres }));
+  return [...areas, ...unmapped];
+}
+
+/** The summary counts what the list shows: areas, never cells. */
+export function countAreas(cells: NearbyCell[]): { confirmed: number; pending: number } {
+  const rows = areaRows(cells);
+  const confirmed = rows.filter((row) => row.confirmed).length;
+  return { confirmed, pending: rows.length - confirmed };
+}
+
+/** A merged area holds several cells: identical service, company and state read as one row. */
+export function dedupeRows<T extends { service: Service; provider: Provider; confirmed: boolean }>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    const key = `${row.service}|${row.provider}|${row.confirmed ? 1 : 0}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** The H3 cell a position falls in, at the resolution of an already published cell (9 when there is none). */
+export function positionCell(position: [number, number], reference?: string): string {
+  const lib = requireH3();
+  const resolution = reference && lib.isValidCell(reference) ? lib.getResolution(reference) : 9;
+  return lib.latLngToCell(position[0], position[1], resolution);
+}
+
+const kindOf = (service: Service): string => serviceStyles[service].label.toLowerCase();
+
+function countsAnswer(confirmed: number, pending: number): string {
+  const outages = `${confirmed} ${confirmed === 1 ? 'corte confirmado' : 'cortes confirmados'}`;
+  const reports = `${pending} ${pending === 1 ? 'reporte sin confirmar' : 'reportes sin confirmar'}`;
+  if (pending === 0) return `${outages}.`;
+  if (confirmed === 0) return `${reports}. Todavía no hay cortes confirmados.`;
+  return `${outages} y ${reports}.`;
+}
+
+/**
+ * The one line worth reading before anything is expanded. A lone unconfirmed
+ * report is never worded as an outage: confirmed areas lead, pending ones say so.
+ */
 export function leadAnswer(cells: NearbyCell[]): string {
-  const [first] = cells;
-  if (!first) return 'Sin cortes reportados cerca.';
-  const label = serviceStyles[first.service].label;
-  if (first.metres === undefined) {
-    // One area, one count: contiguous cells draw as a single zone. An unmappable index still counts as one.
-    const zones = toCellBlobs(cells).length || cells.length;
-    return `${zones === 1 ? '1 zona' : `${zones} zonas`} con cortes en el piloto. Activa tu ubicación para ver cuál te queda más cerca.`;
+  const rows = areaRows(cells);
+  if (rows.length === 0) return 'Sin cortes reportados cerca.';
+  const near = rows
+    .flatMap((row) => (row.metres === undefined ? [] : [{ ...row, metres: row.metres }]))
+    .sort((a, b) => a.metres - b.metres || Number(b.confirmed) - Number(a.confirmed));
+  const [nearest] = near;
+  if (!nearest) {
+    const confirmed = rows.filter((row) => row.confirmed).length;
+    return countsAnswer(confirmed, rows.length - confirmed);
   }
-  return `Lo más cerca: ${label} ${formatDistance(first.metres)}`;
+  if (nearest.confirmed) return `Corte de ${kindOf(nearest.service)} confirmado ${formatDistance(nearest.metres)}`;
+  const confirmedNear = near.find((row) => row.confirmed);
+  const pending = `un reporte de ${kindOf(nearest.service)} sin confirmar ${formatDistance(nearest.metres)}`;
+  return confirmedNear
+    ? `Corte de ${kindOf(confirmedNear.service)} confirmado ${formatDistance(confirmedNear.metres)}. Más cerca, ${pending}.`
+    : `Sin cortes confirmados cerca. Hay ${pending}.`;
 }
