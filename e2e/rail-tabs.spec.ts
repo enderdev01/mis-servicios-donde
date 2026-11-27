@@ -17,14 +17,14 @@ const DESKTOP = { width: 1280, height: 900 };
 
 /**
  * Opens the mobile sheet and waits for it to finish rising. `aria-expanded`
- * flips synchronously while the `.42s` transform is still running, so any
+ * flips synchronously while the `.28s` transform is still running, so any
  * assertion about where something sits on screen has to wait for the slide to
  * settle — otherwise it measures the sheet mid-flight.
  */
 async function openSheet(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Ver el panel' }).click();
   await expect(page.locator('#grip')).toHaveAttribute('aria-expanded', 'true');
-  // Wait for the `.42s` transform to reach its resting identity matrix. Polling
+  // Wait for the `.28s` transform to reach its resting identity matrix. Polling
   // the sheet's top edge for two equal reads is not enough: the transition may
   // not have started yet when the first pair is taken, and the loop then exits
   // at the peek position — which passes alone and fails under load.

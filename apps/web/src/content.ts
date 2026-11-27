@@ -62,6 +62,13 @@ export function thanksMessage(status: string | undefined): string {
 
 export const ownReportLabel = 'Tu reporte · sin confirmar';
 
+/** Leaflet ships these titles in English; the page is `lang="es"`. */
+export const mapControlLabels = {
+  zoomIn: 'Acercar',
+  zoomOut: 'Alejar',
+  leafletTitle: 'Biblioteca de JavaScript para mapas interactivos',
+};
+
 export interface OnboardingStep {
   id: string;
   title: string;

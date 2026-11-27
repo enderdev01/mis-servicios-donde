@@ -45,7 +45,7 @@ export function createApp(makeContext: (env: Env) => RequestContext) {
   app.use('*', async (c, next) => {
     if (await c.var.api.limits.global(clientIp(c.req.header('cf-connecting-ip')))) return next();
     c.header('Retry-After', '60');
-    return c.json({ code: 'rate_limited', message: 'Too many requests.' }, 429);
+    return c.json({ code: 'rate_limited', message: 'Too many requests.', retryAfterSeconds: 60 }, 429);
   });
 
   app.get('/health', (c) => c.json({ status: 'ok' as const }));
@@ -56,7 +56,7 @@ export function createApp(makeContext: (env: Env) => RequestContext) {
       const result = await c.var.api.limits.report(clientIp(c.req.header('cf-connecting-ip')));
       if (result.allowed) return next();
       c.header('Retry-After', String(result.retryAfterSeconds));
-      return c.json({ code: 'rate_limited', message: 'Too many requests.' }, 429);
+      return c.json({ code: 'rate_limited', message: 'Too many requests.', retryAfterSeconds: result.retryAfterSeconds }, 429);
     },
     bodyLimit({
       maxSize: JSON_BODY_LIMIT_BYTES,

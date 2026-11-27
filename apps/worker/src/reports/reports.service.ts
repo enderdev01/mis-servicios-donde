@@ -3,7 +3,7 @@ import { latLngToCell } from 'h3-js';
 import type { IntakeOutcome } from '../consensus/cell-coordinator.js';
 import { selectRows } from '../database/d1.js';
 import { canonicalSubmissionHash, createVersionedDeviceToken } from '../trust/trust.service.js';
-import { ReportRequestError, unavailable, validateReportInput } from './report-input.js';
+import { ReportRequestError, intakePaused, outsidePilotZone, unavailable, validateReportInput } from './report-input.js';
 import { providerFor, type IntakeJob } from './report-intake.js';
 
 interface PilotZoneRow { id: string; name: string; boundary: string }
@@ -19,7 +19,7 @@ export class ReportsService {
 
   async accept(value: unknown): Promise<{ submissionId: string; accepted: true }> {
     // Retention must run before data is collected: the spec purges names in 24 h and events in 48 h.
-    if (process.env.INTAKE_ENABLED !== 'true' || process.env.RETENTION_WORKER_ENABLED !== 'true') throw unavailable();
+    if (process.env.INTAKE_ENABLED !== 'true' || process.env.RETENTION_WORKER_ENABLED !== 'true') throw intakePaused();
     const input = validateReportInput(value);
     const resolution = this.h3Resolution;
     const secret = this.deviceSecret;
@@ -27,7 +27,7 @@ export class ReportsService {
     // fall back to a shared default that makes pseudonyms guessable.
     if (resolution === undefined || !secret) throw unavailable();
     const zone = await this.findPilotZone(input.latitude, input.longitude);
-    if (!zone) throw unavailable();
+    if (!zone) throw outsidePilotZone();
     const h3Cell = latLngToCell(input.latitude, input.longitude, resolution);
     const deviceToken = createVersionedDeviceToken(input.deviceId, secret, 'v1');
     const requestHash = canonicalSubmissionHash({

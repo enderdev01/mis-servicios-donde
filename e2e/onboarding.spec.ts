@@ -91,14 +91,16 @@ test('reveals the new illustration only once it is decoded', async ({ page }) =>
   const onboarding = page.getByRole('region', { name: 'Introducción al mapa comunitario' });
   await expect(onboarding).toBeVisible();
 
-  // Every step illustration is fetched at open, so a move never has to wait on
-  // the network and the reused <img> is not left painting the previous bitmap.
-  await page.waitForFunction(() => {
-    const loaded = performance
-      .getEntriesByType('resource')
-      .filter((entry) => entry.name.includes('/onboarding/'));
-    return new Set(loaded.map((entry) => entry.name)).size >= 4;
-  });
+  // Only the shown illustration and the next one are fetched at open (the other
+  // two used to compete with the first one for bandwidth), so a move still never
+  // has to wait on the network and the reused <img> is not left painting the
+  // previous bitmap.
+  const requested = (): Promise<string[]> => page.evaluate(() => [...new Set(performance
+    .getEntriesByType('resource')
+    .map((entry) => entry.name)
+    .filter((name) => name.includes('/onboarding/'))
+    .map((name) => name.slice(name.lastIndexOf('/') + 1)))].sort());
+  await expect.poll(requested).toEqual(['1onboard.webp', '2onboard.webp']);
 
   await onboarding.getByRole('button', { name: 'Siguiente' }).click();
   await expect(onboarding.locator('.onboarding-progress')).toContainText('Paso 2 de 4');
@@ -109,6 +111,40 @@ test('reveals the new illustration only once it is decoded', async ({ page }) =>
   expect(image.src).toBe('/onboarding/2onboard.webp');
   expect(image.complete).toBe(true);
   expect(image.naturalWidth).toBeGreaterThan(0);
+  // Showing step 2 warms step 3, and still not step 4.
+  await expect.poll(requested).toEqual(['1onboard.webp', '2onboard.webp', '3onboard.webp']);
+});
+
+test('makes the page behind the first run inert and gives it back on close', async ({ page }) => {
+  await page.goto('/');
+
+  const onboarding = page.getByRole('region', { name: 'Introducción al mapa comunitario' });
+  await expect(onboarding).toBeVisible();
+
+  const inertState = (): Promise<boolean[]> => page.evaluate(() =>
+    ['.garden', '#identity', '#rail'].map((selector) => document.querySelector<HTMLElement>(selector)!.inert));
+  expect(await inertState(), 'map, identity and rail are out of the tab order while the layer is open').toEqual([true, true, true]);
+
+  // Tab never leaves the layer for the hidden controls: it cycles inside the
+  // card and then out to the browser chrome, never to the map or the form.
+  const outside = new Set<string>();
+  for (let press = 0; press < 12; press += 1) {
+    await page.keyboard.press('Tab');
+    outside.add(await page.evaluate(() => (document.activeElement?.closest('#onboarding') ? 'onboarding' : document.activeElement?.id || document.activeElement?.tagName || '')));
+  }
+  expect([...outside].filter((where) => where !== 'onboarding' && where !== 'BODY')).toEqual([]);
+  // A hidden control cannot take focus even by script, which is also what takes it out of the accessibility tree.
+  const canFocusSubmit = (): Promise<boolean> => page.evaluate(() => {
+    const submit = document.querySelector<HTMLElement>('#submit')!;
+    submit.focus();
+    return document.activeElement === submit;
+  });
+  expect(await canFocusSubmit()).toBe(false);
+
+  await onboarding.getByRole('button', { name: 'Omitir' }).click();
+  await expect(onboarding).toBeHidden();
+  expect(await inertState()).toEqual([false, false, false]);
+  expect(await canFocusSubmit()).toBe(true);
 });
 
 test('fades the surface out before entering the app', async ({ page }) => {

@@ -116,12 +116,13 @@ test('reports from the area dialog through the same submit path', async ({ page 
   await page.goto('/');
   await page.locator('#cell-list .cell-row').first().click();
   await page.getByRole('button', { name: 'También me pasa' }).click();
-  await expect(page.getByRole('dialog')).toContainText('Gracias por tu reporte');
+  // By id: the area dialog is still fading out while the thank-you opens.
+  await expect(page.locator('#thanks')).toContainText('Gracias por tu reporte');
   await page.getByRole('button', { name: 'Entendido' }).click();
 
   await page.locator('#cell-list .cell-row').first().click();
   await page.getByRole('button', { name: 'Ya volvió aquí' }).click();
-  await expect(page.getByRole('dialog')).toContainText('volvió');
+  await expect(page.locator('#thanks')).toContainText('volvió');
 
   expect(bodies).toHaveLength(2);
   expect(bodies[0]).toMatchObject({ services: ['water'], providers: { water: 'sedapal' }, status: 'outage', latitude: -12.0464, longitude: -77.0428 });
@@ -143,7 +144,7 @@ test('brings the reporter to the message when the dialog report fails', async ({
   await page.locator('#cell-list .cell-row').first().click();
   await page.getByRole('button', { name: 'También me pasa' }).click();
 
-  await expect(page.getByRole('alert')).toContainText('Ya enviaste este reporte hace menos de una hora.');
+  await expect(page.locator('#report-state')).toContainText('Ya enviaste este reporte hace menos de una hora.');
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
@@ -158,7 +159,7 @@ test('keeps the browser private and actionable when rollout APIs are disabled', 
   await page.getByLabel('Empresa de agua').selectOption('sedapal');
   await page.getByRole('button', { name: 'Enviar reporte' }).click();
 
-  await expect(page.getByRole('alert')).toContainText('No pudimos enviar tu reporte ahora.');
+  await expect(page.locator('#report-state')).toContainText('No pudimos enviar tu reporte ahora.');
   await expect(page.getByRole('status')).toContainText('Nadie ha reportado cortes en los distritos con cobertura.');
   await expect(page.getByLabel('Cortes confirmados por zona')).toBeEmpty();
 });
