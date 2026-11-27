@@ -22,6 +22,8 @@ import {
   summarizeCells,
   toCellBlobs,
   toPublicCells,
+  soleProvider,
+  zoneAt,
   zoneBounds,
 } from './map.js';
 
@@ -43,6 +45,33 @@ describe('zone projection', () => {
 
   it('drops entries with a missing or malformed boundary', () => {
     expect(toZones([null, 'x', { slug: 'a', name: 'A' }, { slug: 'b', name: 'B', boundary: { ...boundary, minLatitude: '1' } }, { slug: 'c', name: 'C', boundary: { ...boundary, maxLongitude: Number.NaN } }])).toEqual([]);
+  });
+});
+
+describe('district choice', () => {
+  const box = (minLatitude: number, maxLatitude: number, minLongitude: number, maxLongitude: number) => ({ minLatitude, maxLatitude, minLongitude, maxLongitude });
+  // Overlapping boxes; «aaa» sorts first but its centre is the farther one.
+  const zones = [
+    { slug: 'aaa', name: 'Aaa', boundary: box(-12.2, -12, -77.2, -77) },
+    { slug: 'zzz', name: 'Zzz', boundary: box(-12.1, -11.9, -77.1, -76.9) },
+  ];
+
+  it('picks the containing box whose centre is nearest, not the alphabetical one', () => {
+    expect(zoneAt(zones, -12.02, -76.98)?.slug).toBe('zzz');
+    expect(zoneAt(zones, -12.18, -77.18)?.slug).toBe('aaa');
+  });
+
+  it('answers undefined outside every box', () => {
+    expect(zoneAt(zones, -13, -78)).toBeUndefined();
+    expect(zoneAt([], -12, -77)).toBeUndefined();
+  });
+});
+
+describe('provider preselection', () => {
+  it('preselects only a service with a single named company', () => {
+    expect(soleProvider('water')).toBe('sedapal');
+    expect(soleProvider('electricity')).toBeUndefined();
+    expect(soleProvider('internet')).toBeUndefined();
   });
 });
 

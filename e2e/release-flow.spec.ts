@@ -71,11 +71,11 @@ test.describe('after reporting', () => {
     await expect(page.locator('.me span')).toBeVisible();
     await expect(page.locator('#outage-map path.cell-mine')).toHaveCount(1);
     await expect(page.locator('#cell-list .cell-row')).toContainText('Tu reporte · sin confirmar');
-    // The area ends above the peeking sheet (9.6rem tall at 16px), not behind it. Polled: the map is still flying there.
+    // The area ends above the peeking sheet (8.2rem tall at 16px), not behind it. Polled: the map is still flying there.
     await expect.poll(async () => {
       const blob = await page.locator('#outage-map path.cell-mine').boundingBox();
       return (blob?.y ?? Number.POSITIVE_INFINITY) + (blob?.height ?? 0);
-    }).toBeLessThan(844 - 9.6 * 16);
+    }).toBeLessThan(844 - 8.2 * 16);
   });
 
   test('does not promise an unconfirmed area after «Ya volvió»', async ({ page }) => {
@@ -146,6 +146,60 @@ test('brings the reporter to the message when the dialog report fails', async ({
 
   await expect(page.locator('#report-state')).toContainText('Ya enviaste este reporte hace menos de una hora.');
   await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+const rejections = [
+  { status: 503, json: { code: 'intake_paused' }, message: 'Por ahora no estamos recibiendo reportes. El mapa sigue funcionando.' },
+  { status: 422, json: { code: 'outside_pilot_zone' }, message: 'Tu ubicación está fuera de los distritos que cubre el mapa.' },
+  { status: 429, json: { code: 'rate_limited', retryAfterSeconds: 600 }, headers: { 'retry-after': '600' }, message: 'en unos 10 minutos' },
+  { status: 429, json: { code: 'rate_limited', retryAfterSeconds: 61 }, headers: { 'retry-after': '61' }, message: 'en unos 2 minutos' },
+  { status: 400, json: { code: 'report_unavailable' }, message: 'No pudimos enviar tu reporte ahora.' },
+  { status: 500, json: { error: 'boom' }, message: 'No pudimos enviar tu reporte ahora.' },
+];
+
+for (const rejection of rejections) {
+  test(`explains a ${rejection.status} ${JSON.stringify(rejection.json)} answer in neighbour words (#91)`, async ({ page }) => {
+    await asReturningVisitor(page);
+    await grantLocation(page);
+    await page.route('**/v1/cells', (route) => route.fulfill({ json: [] }));
+    await page.route('**/v1/reports', (route) => route.fulfill({ status: rejection.status, json: rejection.json, headers: rejection.headers }));
+
+    await page.goto('/');
+    await page.getByRole('checkbox', { name: 'Agua' }).check();
+    await page.getByRole('button', { name: 'Enviar reporte' }).click();
+
+    const state = page.locator('#report-state');
+    await expect(state).toContainText(rejection.message);
+    await expect(state).not.toContainText(/piloto|zona/i);
+    await expect(page.getByRole('button', { name: 'Enviar reporte' })).toBeEnabled();
+  });
+}
+
+test('preselects the only company of a service and leaves the others to choose (#33)', async ({ page }) => {
+  await asReturningVisitor(page);
+  await grantLocation(page);
+  await page.route('**/v1/cells', (route) => route.fulfill({ json: [] }));
+  const bodies: unknown[] = [];
+  await page.route('**/v1/reports', async (route) => {
+    bodies.push(route.request().postDataJSON());
+    await route.fulfill({ status: 201, json: { accepted: true } });
+  });
+
+  await page.goto('/');
+  await page.getByRole('checkbox', { name: 'Luz' }).check();
+  await expect(page.getByLabel('Empresa de luz')).toHaveValue('');
+  await page.getByRole('checkbox', { name: 'Agua' }).check();
+  // Visible in the form, still changeable, and kept when another service is added.
+  const water = page.getByLabel('Empresa de agua');
+  await expect(water).toHaveValue('sedapal');
+  await expect(water).toBeVisible();
+  await expect(water.locator('option:checked')).toHaveText('Sedapal');
+  await expect(page.getByLabel('Empresa de luz')).toHaveValue('');
+
+  await page.getByRole('checkbox', { name: 'Luz' }).uncheck();
+  await page.getByRole('button', { name: 'Enviar reporte' }).click();
+  await expect(page.locator('#thanks')).toContainText('Gracias por tu reporte');
+  expect(bodies[0]).toMatchObject({ services: ['water'], providers: { water: 'sedapal' } });
 });
 
 test('keeps the browser private and actionable when rollout APIs are disabled', async ({ page }) => {

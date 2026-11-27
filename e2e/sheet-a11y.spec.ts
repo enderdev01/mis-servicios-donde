@@ -314,7 +314,45 @@ test.describe('drag handle', () => {
     await expect(page.locator('#rail-body')).toHaveJSProperty('inert', true);
   });
 
-  test('still toggles with a click and with the keyboard', async ({ page }) => {
+  test('peeks 8.2rem of the sheet, ends before the tab strip and keeps the attribution above it (#34)', async ({ page }) => {
+  await page.setViewportSize(MOBILE);
+  await page.goto('/');
+  await settled(page);
+  const measured = await page.evaluate(() => {
+    const top = (selector: string): number => document.querySelector(selector)!.getBoundingClientRect().top;
+    return {
+      peekVar: getComputedStyle(document.documentElement).getPropertyValue('--peek').trim(),
+      visible: window.innerHeight - top('#rail'),
+      tabsTop: top('#rail-tabs'),
+      attributionBottom: window.innerHeight - document.querySelector('.leaflet-bottom.leaflet-right')!.getBoundingClientRect().bottom,
+    };
+  });
+  expect(measured.peekVar).toBe('8.2rem');
+  expect(measured.visible).toBeCloseTo(8.2 * 16, 0);
+  expect(measured.tabsTop, 'the tab strip starts below the screen edge, never cut by it').toBeGreaterThanOrEqual(MOBILE.height);
+  expect(measured.attributionBottom).toBeCloseTo(8.2 * 16, 0);
+});
+
+for (const viewport of [MOBILE, { width: 360, height: 640 }]) {
+  test(`keeps the zoom and locate controls above the open sheet at ${viewport.width}x${viewport.height} (#38)`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto('/');
+    await page.locator('#grip').click();
+    await settled(page);
+    const controls = await page.evaluate(() => {
+      const railTop = document.getElementById('rail')!.getBoundingClientRect().top;
+      return ['.leaflet-control-zoom-in', '.leaflet-control-zoom-out', '.locate-control'].map((selector) => {
+        const element = document.querySelector(selector)!;
+        const box = element.getBoundingClientRect();
+        const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+        return { selector, aboveSheet: box.bottom <= railTop, reachable: hit === element || element.contains(hit) };
+      });
+    });
+    for (const control of controls) expect(control, control.selector).toMatchObject({ aboveSheet: true, reachable: true });
+  });
+}
+
+test('still toggles with a click and with the keyboard', async ({ page }) => {
     await page.goto('/');
     await page.locator('#grip').click();
     await expect(page.locator('#rail')).toHaveAttribute('data-state', 'open');

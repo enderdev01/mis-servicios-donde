@@ -192,6 +192,38 @@ test('explains what each service colour means', async ({ page }) => {
   await expect(page.locator('#map-legend-states li')).toContainText(['Confirmado', 'Sin confirmar']);
 });
 
+test('picks the nearest-centre district among overlapping ones and calls it approximate (#100)', async ({ page }) => {
+  await asReturningVisitor(page);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'geolocation', {
+      configurable: true,
+      value: { getCurrentPosition: (success: (position: GeolocationPosition) => void) => success({ coords: { latitude: -12.0464, longitude: -77.0428 } } as GeolocationPosition) },
+    });
+  });
+  // Both boxes contain the visitor; «Aaa» sorts first but its centre is the farther one.
+  await page.route('**/v1/zones', (route) => route.fulfill({
+    json: [
+      { slug: 'aaa', name: 'Aaa', boundary: { minLatitude: -12.2, maxLatitude: -12, minLongitude: -77.2, maxLongitude: -77 } },
+      { slug: 'zzz', name: 'Zzz', boundary: { minLatitude: -12.1, maxLatitude: -12.01, minLongitude: -77.1, maxLongitude: -77.01 } },
+    ],
+  }));
+  // With nothing reported the filters are hidden altogether, so one area gives them a reason to show.
+  await page.route('**/v1/cells', (route) => route.fulfill({ json: [{ h3Cell: '898e62c2a9bffff', service: 'water', provider: 'sedapal', confirmed: true }] }));
+
+  await page.goto('/');
+  // The visitor has not asked for the position yet: the locate control does it.
+  await page.getByRole('button', { name: 'Centrar en mi ubicación' }).click();
+
+  const district = page.getByLabel('Ver distrito');
+  await expect(district).toHaveValue('zzz');
+  await expect(page.locator('#district-approx')).toBeVisible();
+  await expect(page.locator('#district-approx')).toHaveText('Distrito aproximado');
+
+  // A district the visitor picks is no longer a guess.
+  await district.selectOption('aaa');
+  await expect(page.locator('#district-approx')).toBeHidden();
+});
+
 test('centres on a district and filters its reports', async ({ page }) => {
   await asReturningVisitor(page);
   await page.route('**/v1/zones', (route) => route.fulfill({

@@ -50,6 +50,27 @@ async function canFocus(page: Page, selector: string): Promise<boolean> {
   }, selector);
 }
 
+test('sizes every tappable control of the report form to at least 44px (#32)', async ({ page }) => {
+  await asReturningVisitor(page);
+  await page.setViewportSize(MOBILE);
+  await page.goto('/');
+  await openSheet(page);
+  await page.getByRole('tab', { name: 'Reportar' }).click();
+  // Two services so the company selects are in the form too.
+  await page.getByRole('checkbox', { name: 'Agua' }).check();
+  await page.getByRole('checkbox', { name: 'Luz' }).check();
+
+  const heights = await page.evaluate(() => {
+    // A checkbox or radio is tapped through its label, so the label is the target.
+    const targets = Array.from(document.querySelectorAll<HTMLElement>('#report-form label:has(input), #report-form select, #report-form button'));
+    return targets.map((target) => ({ name: target.textContent?.trim() || target.getAttribute('aria-label') || target.tagName, height: target.getBoundingClientRect().height }));
+  });
+  expect(heights.length).toBeGreaterThanOrEqual(8);
+  for (const { name, height } of heights) expect(height, name).toBeGreaterThanOrEqual(44);
+  // The shorter note keeps its meaning.
+  await expect(page.locator('#report-panel .fine').last()).toContainText(/ubicación exacta.*una sola vez.*zona amplia.*descarta/);
+});
+
 test('splits the mobile panel into a report tab and a reports tab', async ({ page }) => {
   await asReturningVisitor(page);
   // With nothing reported the filters are hidden altogether (UX2-14), so one area gives them a reason to show.
