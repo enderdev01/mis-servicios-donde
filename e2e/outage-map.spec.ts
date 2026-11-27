@@ -50,7 +50,7 @@ test('renders a pending report dashed and unconfirmed', async ({ page }) => {
   await page.goto('/');
 
   await expect(page.getByRole('status')).toContainText('1 sin confirmar.');
-  await expect(page.getByLabel('Cortes confirmados por zona')).toContainText('Posible corte de luz, sin confirmar');
+  await expect(page.getByLabel('Cortes reportados por área')).toContainText('Posible corte de luz, sin confirmar');
   await expect(page.locator(mapBlobs)).toHaveCount(1);
 });
 
@@ -135,7 +135,7 @@ test('lists a malformed cell as text but refuses to map it', async ({ page }) =>
 
   await page.goto('/');
 
-  await expect(page.getByLabel('Cortes confirmados por zona')).toContainText('Corte de agua confirmado');
+  await expect(page.getByLabel('Cortes reportados por área')).toContainText('Corte de agua confirmado');
   await expect(page.locator(mapBlobs)).toHaveCount(0);
 });
 
@@ -212,17 +212,17 @@ test('centres on a district and filters its reports', async ({ page }) => {
   const district = page.getByLabel('Ver distrito');
   await expect(district.locator('option')).toHaveCount(3);
   await expect(district).toHaveValue('all');
-  await expect(page.getByLabel('Cortes confirmados por zona')).toContainText('Corte de agua');
-  await expect(page.getByLabel('Cortes confirmados por zona')).toContainText('Corte de luz');
+  await expect(page.getByLabel('Cortes reportados por área')).toContainText('Corte de agua');
+  await expect(page.getByLabel('Cortes reportados por área')).toContainText('Corte de luz');
 
   await district.selectOption('rimac');
-  await expect(page.getByLabel('Cortes confirmados por zona')).toContainText('Corte de agua');
-  await expect(page.getByLabel('Cortes confirmados por zona')).not.toContainText('Corte de luz');
+  await expect(page.getByLabel('Cortes reportados por área')).toContainText('Corte de agua');
+  await expect(page.getByLabel('Cortes reportados por área')).not.toContainText('Corte de luz');
 
   await district.selectOption('all');
   await page.getByLabel('Ver empresa').selectOption('luz_del_sur');
-  await expect(page.getByLabel('Cortes confirmados por zona')).toContainText('Corte de luz');
-  await expect(page.getByLabel('Cortes confirmados por zona')).not.toContainText('Corte de agua');
+  await expect(page.getByLabel('Cortes reportados por área')).toContainText('Corte de luz');
+  await expect(page.getByLabel('Cortes reportados por área')).not.toContainText('Corte de agua');
 });
 
 test('opens a modal with every stacked report, state only, and no street lookup while one is unconfirmed', async ({ page }) => {

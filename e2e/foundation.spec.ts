@@ -22,11 +22,11 @@ test('offers an unofficial filtered map and accessible report validation', async
 
   await page.getByLabel('Ver servicio').selectOption('electricity');
   await expect(page.getByRole('status')).toContainText('No hay cortes reportados en este momento.');
-  await expect(page.getByLabel('Cortes confirmados por zona')).toBeEmpty();
+  await expect(page.getByLabel('Cortes reportados por área')).toBeEmpty();
 
   await page.getByLabel('Ver servicio').selectOption('water');
   await expect(page.getByRole('status')).toContainText('1 confirmado.');
-  await expect(page.getByLabel('Cortes confirmados por zona')).toContainText('Corte de agua confirmado');
+  await expect(page.getByLabel('Cortes reportados por área')).toContainText('Corte de agua confirmado');
 
   await page.getByRole('button', { name: 'Enviar reporte' }).click();
   await expect(page.locator('#report-state')).toContainText('Elige al menos un servicio afectado.');
