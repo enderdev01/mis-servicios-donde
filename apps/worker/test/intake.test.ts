@@ -147,8 +147,8 @@ describe('input handling', () => {
   it('rejects a report outside the pilot zones without storing anything and without echoing the input', async () => {
     const response = await submit({ deviceId: 'raw-device', submissionId: 'outside-1', latitude: -13, longitude: -77 });
 
-    expect(response.status).toBe(400);
-    expect(await response.json()).toEqual(generic);
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({ code: 'outside_pilot_zone', message: 'Location is outside the pilot zones.' });
     expect(await count('ReportEvent')).toBe(0);
     expect(await count('SubmissionRecord')).toBe(0);
   });
@@ -157,6 +157,20 @@ describe('input handling', () => {
     expect((await submit({ deviceId: 'name-device', submissionId: 'name-1', name: '<>' })).status).toBe(201);
 
     expect(await count('ReportDisplayName')).toBe(0);
+  });
+
+  it('answers 503 intake_paused while the intake gate is off', async () => {
+    const original = process.env.INTAKE_ENABLED;
+    process.env.INTAKE_ENABLED = 'false';
+    try {
+      const response = await submit({ deviceId: 'paused-device', submissionId: 'paused-1' });
+
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ code: 'intake_paused', message: 'Report intake is paused.' });
+      expect(await count('SubmissionRecord')).toBe(0);
+    } finally {
+      process.env.INTAKE_ENABLED = original;
+    }
   });
 
   it('rejects a malformed body generically', async () => {

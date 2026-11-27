@@ -8,7 +8,8 @@ The API for mis-servicios, and the only backend in this repo. A Hono app on Clou
 - **Database:** D1 through the `DB` binding. The schema and the ten pilot zones are the migrations in `migrations/`.
 - **Background jobs:** one `Scheduler` Durable Object alarm runs alert dispatch, episode expiry and retention. An hourly cron only re-arms a missing alarm.
 - **Report intake:** a `CellCoordinator` Durable Object per H3 cell serializes the read-decide-write of a report.
-- **Rate limits:** a Workers Rate Limiting binding (120 requests per 60 s per IP) and a `ReportLimiter` Durable Object (5 reports per hour per IP).
+- **Rate limits:** a Workers Rate Limiting binding (120 requests per 60 s per IP) and a `ReportLimiter` Durable Object (5 reports per hour per IP). A `429 rate_limited` carries a `Retry-After` header and `retryAfterSeconds` in the body.
+- **Report errors:** `POST /v1/reports` answers `503 intake_paused` (intake gates off), `422 outside_pilot_zone` (point outside every approved zone), `400 report_unavailable` (invalid body or missing server configuration), `409 already_reported` / `submission_conflict`, `413 payload_too_large` and `429 rate_limited`.
 - **Config:** `process.env`, filled from `vars` and secrets by `nodejs_compat`.
 
 ## Local development

@@ -6,7 +6,7 @@ export type { ReportInput, ReportStatus };
 export type ReportServiceName = Service;
 
 export class ReportRequestError extends Error {
-  constructor(public readonly status: 400 | 409, public readonly body: { code: string; message: string }) {
+  constructor(public readonly status: 400 | 409 | 422 | 503, public readonly body: { code: string; message: string }) {
     super(body.message);
   }
 }
@@ -23,6 +23,15 @@ export function validateReportInput(value: unknown): ReportInput {
 
 export function unavailable(): ReportRequestError {
   return new ReportRequestError(400, { code: 'report_unavailable', message: 'Unable to process report.' });
+}
+
+/** The intake gates are off: the client may retry later. */
+export function intakePaused(): ReportRequestError {
+  return new ReportRequestError(503, { code: 'intake_paused', message: 'Report intake is paused.' });
+}
+
+export function outsidePilotZone(): ReportRequestError {
+  return new ReportRequestError(422, { code: 'outside_pilot_zone', message: 'Location is outside the pilot zones.' });
 }
 
 export function conflict(): ReportRequestError {
