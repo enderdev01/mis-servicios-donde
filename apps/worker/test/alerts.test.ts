@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { AlertsService } from '../src/alerts/alerts.service.js';
+import { AlertsService, maxDeliveryAttempts } from '../src/alerts/alerts.service.js';
 import { ConsensusService } from '../src/consensus/consensus.service.js';
 import { db, resetDatabase } from './helpers.js';
 
@@ -110,13 +110,42 @@ describe('alert outbox', () => {
     expect(next.nextDueInSeconds).toBeLessThanOrEqual(60);
   });
 
-  it('cancels pending intents while dispatch is disabled', async () => {
-    const { intentId } = await seedIntent('disabled-cell');
+  it('leaves pending and retryable intents untouched while dispatch is disabled', async () => {
+    const pending = await seedIntent('disabled-cell');
+    const retryable = await seedIntent('disabled-retry-cell', 'retryable');
     delete process.env.ALERT_DISPATCH_ENABLED;
+    let sent = 0;
+    globalThis.fetch = () => { sent += 1; return Promise.resolve(new Response('', { status: 200 })); };
 
-    await alerts.dispatchPending();
+    await expect(alerts.dispatchPending()).resolves.toEqual({ claimedWork: false, nextDueInSeconds: null });
 
-    expect((await statusOf(intentId)).status).toBe('cancelled');
+    expect(sent).toBe(0);
+    expect((await statusOf(pending.intentId)).status).toBe('pending');
+    expect((await statusOf(retryable.intentId)).status).toBe('retryable');
+  });
+
+  it('marks an intent failed after the last allowed attempt, logs it and never claims it again', async () => {
+    const { intentId } = await seedIntent('exhausted-cell');
+    await db.prepare(`UPDATE "AlertIntent" SET "status" = 'retryable', "attempts" = ? WHERE "id" = ?`).bind(maxDeliveryAttempts - 1, intentId).run();
+    let sent = 0;
+    globalThis.fetch = () => { sent += 1; return Promise.resolve(new Response('', { status: 502 })); };
+    const logged: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => { logged.push(args.join(' ')); };
+    try {
+      await alerts.dispatchPending();
+    } finally {
+      console.error = original;
+    }
+
+    expect(await statusOf(intentId)).toEqual({ status: 'failed', attempts: maxDeliveryAttempts, leaseToken: null });
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain(intentId);
+    expect(logged[0]).toContain('502');
+    expect(logged[0]).not.toContain('Corte de agua');
+
+    await expect(alerts.dispatchPending()).resolves.toEqual({ claimedWork: false, nextDueInSeconds: null });
+    expect(sent).toBe(1);
   });
 
   it('evaluates the same quorum twice without a second episode or intent', async () => {
