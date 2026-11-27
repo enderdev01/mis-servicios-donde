@@ -27,6 +27,13 @@ export const reportCopy = {
   mapFailed: 'No pudimos cargar el mapa. Revisa tu conexión y recarga la página.',
 };
 
+/** Leaflet ships these titles in English; the page is `lang="es"`. */
+export const mapControlLabels = {
+  zoomIn: 'Acercar',
+  zoomOut: 'Alejar',
+  leafletTitle: 'Biblioteca de JavaScript para mapas interactivos',
+};
+
 export interface OnboardingStep {
   id: string;
   title: string;
