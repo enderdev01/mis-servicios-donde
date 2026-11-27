@@ -108,7 +108,7 @@ describe('worker app', () => {
   });
 
   it('forwards the cell filters and returns the cells', async () => {
-    const cells: PublicCell[] = [{ h3Cell: '8928', service: 'water', provider: 'sedapal', confirmed: true, reports: 3 }];
+    const cells: PublicCell[] = [{ h3Cell: '8928', service: 'water', provider: 'sedapal', confirmed: true }];
     const ctx = context({ cells: { listCells: vi.fn(async () => cells) } });
 
     const response = await call(ctx, '/v1/cells?service=water&provider=sedapal');

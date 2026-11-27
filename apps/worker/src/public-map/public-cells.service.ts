@@ -9,14 +9,12 @@ export interface PublicCell {
   service: Service;
   provider: Provider;
   confirmed: boolean;
-  /** Distinct neighbours who reported this cell and service. */
-  reports: number;
 }
 
 /** The latest event of each device per cell, service and provider (SQLite has no DISTINCT ON). */
 const latestEvents = `latest AS (
-  SELECT "h3Cell", "service", "provider", "status" FROM (
-    SELECT event."h3Cell", event."service", event."provider", event."status",
+  SELECT "h3Cell", "service", "provider", "status", "createdAt" FROM (
+    SELECT event."h3Cell", event."service", event."provider", event."status", event."createdAt",
       ROW_NUMBER() OVER (PARTITION BY event."h3Cell", event."service", event."provider", event."deviceToken" ORDER BY event."createdAt" DESC, event."id" DESC) AS "rank"
     FROM "ReportEvent" AS event
     WHERE event."expiresAt" > ${nowSql}
@@ -45,10 +43,10 @@ export class PublicCellsService {
     const episodeFilter = filters('episode');
     const eventFilter = filters('latest');
 
-    const confirmed = await selectRows<{ h3Cell: string; service: Service; provider: Provider; confirmed: number; reports: number }>(
+    const confirmed = await selectRows<{ h3Cell: string; service: Service; provider: Provider; confirmed: number }>(
       this.db,
       `WITH ${latestEvents}
-      SELECT episode."h3Cell", episode."service", episode."provider", 1 AS "confirmed", count(*) AS "reports"
+      SELECT episode."h3Cell", episode."service", episode."provider", 1 AS "confirmed"
       FROM "OutageEpisode" AS episode
       INNER JOIN "PilotZone" AS zone ON zone."id" = episode."zoneId"
       INNER JOIN latest ON latest."h3Cell" = episode."h3Cell" AND latest."service" = episode."service" AND latest."provider" = episode."provider" AND latest."status" = 'outage'
@@ -57,13 +55,15 @@ export class PublicCellsService {
       episodeFilter.values,
     );
 
-    const pending = await selectRows<{ h3Cell: string; service: Service; provider: Provider; confirmed: number; reports: number }>(
+    const pending = await selectRows<{ h3Cell: string; service: Service; provider: Provider; confirmed: number }>(
       this.db,
       `WITH ${latestEvents}
-      SELECT latest."h3Cell", latest."service", latest."provider", 0 AS "confirmed", count(*) AS "reports"
+      SELECT latest."h3Cell", latest."service", latest."provider", 0 AS "confirmed"
       FROM latest
       WHERE latest."status" = 'outage'
-        AND NOT EXISTS (SELECT 1 FROM "OutageEpisode" AS episode WHERE episode."h3Cell" = latest."h3Cell" AND episode."service" = latest."service" AND episode."provider" IS latest."provider")${eventFilter.sql}
+        -- Votes from before the last closure belong to the closed episode and must not resurface as pending.
+        AND latest."createdAt" > COALESCE((SELECT max(closed."closedAt") FROM "OutageEpisode" AS closed WHERE closed."h3Cell" = latest."h3Cell" AND closed."service" = latest."service" AND closed."provider" IS latest."provider"), '')
+        AND NOT EXISTS (SELECT 1 FROM "OutageEpisode" AS episode WHERE episode."h3Cell" = latest."h3Cell" AND episode."service" = latest."service" AND episode."provider" IS latest."provider" AND episode."active" = 1 AND episode."expiresAt" > ${nowSql})${eventFilter.sql}
       GROUP BY latest."h3Cell", latest."service", latest."provider"`,
       eventFilter.values,
     );

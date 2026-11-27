@@ -44,10 +44,10 @@ describe('quorum under concurrency', () => {
   it('shows reports below quorum as pending, confirms at quorum and clears on a restored quorum', async () => {
     const body = { services: ['internet'], providers: { internet: 'win' } };
     await Promise.all(['a', 'b'].map((id) => submit({ ...body, deviceId: `q-${id}`, submissionId: `q-${id}` })));
-    expect(await (await request('/v1/cells?service=internet')).json()).toEqual([{ h3Cell: limaCell, service: 'internet', provider: 'win', confirmed: false, reports: 2 }]);
+    expect(await (await request('/v1/cells?service=internet')).json()).toEqual([{ h3Cell: limaCell, service: 'internet', provider: 'win', confirmed: false }]);
 
     await submit({ ...body, deviceId: 'q-c', submissionId: 'q-c' });
-    expect(await (await request('/v1/cells?service=internet')).json()).toEqual([{ h3Cell: limaCell, service: 'internet', provider: 'win', confirmed: true, reports: 3 }]);
+    expect(await (await request('/v1/cells?service=internet')).json()).toEqual([{ h3Cell: limaCell, service: 'internet', provider: 'win', confirmed: true }]);
 
     await Promise.all(['a', 'b', 'c'].map((id) => submit({ ...body, status: 'restored', deviceId: `r-${id}`, submissionId: `r-${id}` })));
     expect(await (await request('/v1/cells?service=internet')).json()).toEqual([]);

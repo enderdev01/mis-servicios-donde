@@ -3,7 +3,7 @@ import { type Provider, type Service } from '@mis-servicios/contracts';
 import { AlertsService } from '../alerts/alerts.service.js';
 import { nowSql, offsetSql, selectRows } from '../database/d1.js';
 import { configuredIntervalMs } from '../workers/interval-worker.js';
-import { episodeLifetimeHours, isQuorumThresholdCrossing, quorumWindowMinutes, shouldRestoreEpisode } from './consensus-policy.js';
+import { episodeLifetimeHours, isQuorumThresholdCrossing, quorumSize, quorumWindowMinutes, shouldRestoreEpisode } from './consensus-policy.js';
 
 type Status = 'outage' | 'restored';
 interface Vote { service: Service; provider: Provider; eventId: string }
@@ -57,6 +57,10 @@ export class ConsensusService {
       FROM quorum`,
       [...key, ...(voteWindowStart ? [voteWindowStart] : []), status, vote.eventId, status],
     );
+    if (counts && status === 'outage' && episode && Number(counts.current) >= quorumSize) {
+      await this.db.prepare(`UPDATE "OutageEpisode" SET "expiresAt" = ${offsetSql(`+${episodeLifetimeHours} hours`)}, "lastQuorumAt" = ${nowSql} WHERE "id" = ?`).bind(episode.id).run();
+      return;
+    }
     if (!counts || !isQuorumThresholdCrossing(Number(counts.previous), Number(counts.current))) return;
     if (status === 'restored') {
       if (episode && shouldRestoreEpisode({
@@ -72,10 +76,7 @@ export class ConsensusService {
       }
       return;
     }
-    if (episode) {
-      await this.db.prepare(`UPDATE "OutageEpisode" SET "expiresAt" = ${offsetSql(`+${episodeLifetimeHours} hours`)}, "lastQuorumAt" = ${nowSql} WHERE "id" = ?`).bind(episode.id).run();
-      return;
-    }
+    if (episode) return;
     const episodeId = crypto.randomUUID();
     // ON CONFLICT DO NOTHING: if an active episode already exists the unique index skips the open, and the
     // intent statement (which needs the new episode row) skips with it.

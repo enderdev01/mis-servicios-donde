@@ -30,7 +30,7 @@ export class ReportIntake {
   async persist(job: IntakeJob): Promise<{ submissionId: string; accepted: true }> {
     const { input, deviceToken, requestHash, h3Cell } = job;
     const done = { submissionId: input.submissionId, ...toPublicTrustOutcome({ eligible: true }) };
-    if (await this.isReplay(deviceToken, input.submissionId, requestHash)) return done;
+    if (await this.isReplay(deviceToken, input.submissionId, requestHash)) return this.reevaluate(job, done);
 
     const submissionId = crypto.randomUUID();
     const votes = input.services.map((service) => ({ service, provider: providerFor(input, service), eventId: crypto.randomUUID() }));
@@ -59,10 +59,23 @@ export class ReportIntake {
     const [inserted] = await this.db.batch(statements);
     if (!inserted?.meta.changes) {
       // Either a concurrent replay of this submission won the unique pair, or the device already reported.
-      if (await this.isReplay(deviceToken, input.submissionId, requestHash)) return done;
+      if (await this.isReplay(deviceToken, input.submissionId, requestHash)) return this.reevaluate(job, done);
       throw alreadyReported();
     }
     await this.consensus.evaluate(job.zoneId, job.zoneName, h3Cell, input.status, votes);
+    return done;
+  }
+
+  /** A retry may follow an evaluation that failed after the commit, so evaluate again; it is idempotent (one active episode, one opening alert). */
+  private async reevaluate<T>(job: IntakeJob, done: T): Promise<T> {
+    const events = await selectRows<{ id: string; service: Service; provider: Provider }>(
+      this.db,
+      `SELECT event."id", event."service", event."provider" FROM "ReportEvent" AS event
+      INNER JOIN "SubmissionRecord" AS submission ON submission."id" = event."submissionId"
+      WHERE submission."deviceToken" = ? AND submission."submissionId" = ?`,
+      [job.deviceToken, job.input.submissionId],
+    );
+    await this.consensus.evaluate(job.zoneId, job.zoneName, job.h3Cell, job.input.status, events.map((event) => ({ service: event.service, provider: event.provider, eventId: event.id })));
     return done;
   }
 

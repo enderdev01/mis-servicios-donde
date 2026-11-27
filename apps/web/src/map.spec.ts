@@ -23,7 +23,7 @@ const limaCell = latLngToCell(-12.0464, -77.0428, 9);
 
 describe('public cell projection', () => {
   it('keeps only the public fields', () => {
-    expect(toPublicCells([{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true, reports: 2, deviceToken: 'never-public' }]))
+    expect(toPublicCells([{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true, deviceToken: 'never-public' }]))
       .toEqual([{ h3Cell: limaCell, service: 'water', provider: 'sedapal', confirmed: true }]);
   });
 

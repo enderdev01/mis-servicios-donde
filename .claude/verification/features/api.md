@@ -36,7 +36,7 @@ Edge cases: an empty list means the D1 migrations did not run (`npm run db:migra
 | `cells --service water --provider claro --base <prod>` | same, 0 cells | 0 |
 | `cells --service gas --base <prod>` | same, 0 cells (an unsupported service gives an empty list, not an error) | 0 |
 
-To see a non-empty list, run `npm run dev -w @mis-servicios/worker -- --var INTAKE_ENABLED:true --var PUBLIC_MAP_ENABLED:true --var DEVICE_TOKEN_SECRET:<anything>` (`H3_RESOLUTION` is 9 in `wrangler.jsonc`) and have three different `--device` ids report an outage in the same zone (episode quorum is 3 devices in 60 minutes).
+To see a non-empty list, run `npm run dev -w @mis-servicios/worker -- --var INTAKE_ENABLED:true --var RETENTION_WORKER_ENABLED:true --var PUBLIC_MAP_ENABLED:true --var DEVICE_TOKEN_SECRET:<anything>` (`H3_RESOLUTION` is 9 in `wrangler.jsonc`) and have three different `--device` ids report an outage in the same zone (episode quorum is 3 devices in 60 minutes).
 
 ## Submit report (writes)
 
