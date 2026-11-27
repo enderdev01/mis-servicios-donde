@@ -28,7 +28,8 @@ After the one-time setup below, every push to `master` deploys the Worker: the `
 `.github/workflows/ci.yml` runs after `verify` passes, applies the remote D1 migrations, then runs `wrangler deploy`.
 It needs two secrets in the repository's `production` environment (Settings → Environments):
 
-- `CLOUDFLARE_API_TOKEN`: an API token with **Workers Scripts: Edit** and **D1: Edit** on the account.
+- `CLOUDFLARE_API_TOKEN`: an API token with **Workers Scripts: Edit** and **D1: Edit** on the account (the
+  "Edit Cloudflare Workers" template plus D1: Edit also works if the first run asks for more).
 - `CLOUDFLARE_ACCOUNT_ID`: the account id shown in the Cloudflare dashboard.
 
 Migrations run before the deploy, so a migration must keep the running Worker working (add, do not rename or drop,
