@@ -1,5 +1,5 @@
 import { type Page } from '@playwright/test';
-import { asReturningVisitor, expect, revealNotice, test } from './fixtures.js';
+import { asReturningVisitor, defaultDeviceId, expect, revealNotice, test } from './fixtures.js';
 
 async function grantLocation(page: Page): Promise<void> {
   await page.addInitScript(() => {
@@ -123,6 +123,7 @@ test('reports from the area dialog through the same submit path', async ({ page 
   await page.locator('#cell-list .cell-row').first().click();
   await page.getByRole('button', { name: 'Ya volvió aquí' }).click();
   await expect(page.locator('#thanks')).toContainText('volvió');
+  await expect(page.locator('#thanks')).toBeVisible();
 
   expect(bodies).toHaveLength(2);
   expect(bodies[0]).toMatchObject({ services: ['water'], providers: { water: 'sedapal' }, status: 'outage', latitude: -12.0464, longitude: -77.0428 });
@@ -198,7 +199,8 @@ test('preselects the only company of a service and leaves the others to choose (
 
   await page.getByRole('checkbox', { name: 'Luz' }).uncheck();
   await page.getByRole('button', { name: 'Enviar reporte' }).click();
-  await expect(page.locator('#thanks')).toContainText('Gracias por tu reporte');
+  // The closed <dialog> already holds this text; the role only matches once it is open.
+  await expect(page.getByRole('dialog')).toContainText('Gracias por tu reporte');
   expect(bodies[0]).toMatchObject({ services: ['water'], providers: { water: 'sedapal' } });
 });
 
@@ -216,4 +218,26 @@ test('keeps the browser private and actionable when rollout APIs are disabled', 
   await expect(page.locator('#report-state')).toContainText('No pudimos enviar tu reporte ahora.');
   await expect(page.getByRole('status')).toContainText('Nadie ha reportado cortes en los distritos con cobertura.');
   await expect(page.getByLabel('Cortes reportados por área')).toBeEmpty();
+});
+
+test('a returning visitor with an old browser-made id reports with the server-signed id and keeps it', async ({ page }) => {
+  await asReturningVisitor(page);
+  await grantLocation(page);
+  await page.addInitScript(() => localStorage.setItem('mis-servicios:device-id', '3f2b8c1e-0000-4000-8000-000000000000'));
+  await page.route('**/v1/cells', (route) => route.fulfill({ json: [] }));
+  const sent: unknown[] = [];
+  await page.route('**/v1/reports', async (route) => {
+    sent.push(route.request().postDataJSON());
+    await route.fulfill({ status: 201, json: { submissionId: 'signed-submission', accepted: true } });
+  });
+
+  await page.goto('/');
+  await page.getByRole('checkbox', { name: 'Agua' }).check();
+  await page.getByLabel('Empresa de agua').selectOption('sedapal');
+  await page.getByRole('button', { name: 'Enviar reporte' }).click();
+  await expect(page.getByRole('dialog')).toContainText('Gracias por tu reporte');
+
+  expect(sent).toHaveLength(1);
+  expect(sent[0]).toMatchObject({ deviceId: defaultDeviceId });
+  expect(await page.evaluate(() => localStorage.getItem('mis-servicios:device-id'))).toBe(defaultDeviceId);
 });

@@ -8,6 +8,7 @@ import { ZoneNotFoundError, type NoticesService } from './notices/notices.servic
 import type { PublicCellsService } from './public-map/public-cells.service.js';
 import { ReportRequestError } from './reports/report-input.js';
 import type { ReportsService } from './reports/reports.service.js';
+import type { LimitKind } from './security/window-counter.js';
 
 const JSON_BODY_LIMIT_BYTES = 10 * 1024;
 
@@ -21,13 +22,22 @@ export interface RequestContext {
   limits: {
     /** False once the client IP exceeded the global limit. */
     global(ip: string): Promise<boolean>;
-    report(ip: string): Promise<ReportLimitResult>;
+    /** One hit on the hourly window `kind` for `key` (a client IP or a verified device id). */
+    hit(kind: LimitKind, key: string): Promise<ReportLimitResult>;
+  };
+  devices: {
+    /** A fresh signed device id, or undefined when the signing secret is missing. */
+    issue(): string | undefined;
+    /** The id inside a signed device id, or undefined when the signature is not genuine. */
+    verify(value: unknown): string | undefined;
   };
   dispose(): Promise<void>;
 }
 
+type AppEnv = { Bindings: Env; Variables: { api: RequestContext } };
+
 export function createApp(makeContext: (env: Env) => RequestContext) {
-  const app = new Hono<{ Bindings: Env; Variables: { api: RequestContext } }>();
+  const app = new Hono<AppEnv>();
   const clientIp = (header: string | undefined): string => header?.trim() || 'unknown';
 
   app.use('*', async (c, next) => {
@@ -50,22 +60,40 @@ export function createApp(makeContext: (env: Env) => RequestContext) {
 
   app.get('/health', (c) => c.json({ status: 'ok' as const }));
 
+  /** Null when the hit is allowed; otherwise the 429 response. */
+  const limited = async (c: Context<AppEnv>, kind: LimitKind, key: string) => {
+    const result = await c.var.api.limits.hit(kind, key);
+    if (result.allowed) return null;
+    c.header('Retry-After', String(result.retryAfterSeconds));
+    return c.json({ code: 'rate_limited', message: 'Too many requests.', retryAfterSeconds: result.retryAfterSeconds }, 429);
+  };
+
+  app.post('/v1/device', async (c) => {
+    const blocked = await limited(c, 'device-issue', clientIp(c.req.header('cf-connecting-ip')));
+    if (blocked) return blocked;
+    const deviceId = c.var.api.devices.issue();
+    // Never fall back to an unsigned id: it would let any browser pick its own.
+    if (!deviceId) return c.json({ code: 'device_unavailable', message: 'Unable to issue device identifier.' }, 503);
+    return c.json({ deviceId }, 201);
+  });
+
   app.post(
     '/v1/reports',
-    async (c, next) => {
-      const result = await c.var.api.limits.report(clientIp(c.req.header('cf-connecting-ip')));
-      if (result.allowed) return next();
-      c.header('Retry-After', String(result.retryAfterSeconds));
-      return c.json({ code: 'rate_limited', message: 'Too many requests.', retryAfterSeconds: result.retryAfterSeconds }, 429);
-    },
+    async (c, next) => (await limited(c, 'report-ip', clientIp(c.req.header('cf-connecting-ip')))) ?? next(),
     bodyLimit({
       maxSize: JSON_BODY_LIMIT_BYTES,
       onError: (c) => c.json({ code: 'payload_too_large', message: 'Request body too large.' }, 413),
     }),
     async (c) => {
       const body: unknown = await c.req.json().catch(() => undefined);
+      const signed = typeof body === 'object' && body !== null ? (body as Record<string, unknown>).deviceId : undefined;
+      const deviceId = c.var.api.devices.verify(signed);
+      if (deviceId === undefined) return c.json({ code: 'device_invalid', message: 'Device identifier is not valid.' }, 401);
+      const blocked = await limited(c, 'report-device', deviceId);
+      if (blocked) return blocked;
       try {
-        return c.json(await c.var.api.reports.accept(body), 201);
+        // The service sees the verified id, never the signed form.
+        return c.json(await c.var.api.reports.accept({ ...(body as object), deviceId }), 201);
       } catch (error) {
         if (error instanceof ReportRequestError) return c.json(error.body, error.status);
         return c.json({ code: 'report_unavailable', message: 'Unable to process report.' }, 500);

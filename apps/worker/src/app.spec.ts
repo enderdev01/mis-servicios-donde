@@ -17,12 +17,20 @@ function context(overrides: Partial<RequestContext> = {}): RequestContext {
     },
     limits: {
       global: vi.fn(async () => true),
-      report: vi.fn(async () => ({ allowed: true as const })),
+      hit: vi.fn(async () => ({ allowed: true as const })),
+    },
+    // A fake signature: `<id>.ok` is genuine, anything else is not.
+    devices: {
+      issue: vi.fn(() => 'new-id.ok'),
+      verify: vi.fn((value: unknown) => (typeof value === 'string' && value.endsWith('.ok') ? value.slice(0, -3) : undefined)),
     },
     dispose: vi.fn(async () => undefined),
     ...overrides,
   };
 }
+
+const allowed = { allowed: true as const };
+const limitsWith = (hit: RequestContext['limits']['hit']): RequestContext['limits'] => ({ global: vi.fn(async () => true), hit });
 
 function call(ctx: RequestContext, path: string, init?: RequestInit, env: Record<string, unknown> = {}) {
   return createApp(() => ctx).request(path, init, env, executionCtx);
@@ -45,33 +53,71 @@ describe('worker app', () => {
   it('accepts a report with 201 like the Nest controller and passes the parsed body through', async () => {
     const ctx = context();
 
-    const response = await call(ctx, '/v1/reports', post({ submissionId: 'abc' }));
+    const response = await call(ctx, '/v1/reports', post({ submissionId: 'abc', deviceId: 'dev-1.ok' }));
 
     expect(response.status).toBe(201);
     expect(await response.json()).toEqual({ submissionId: 's-1', accepted: true });
-    expect(ctx.reports.accept).toHaveBeenCalledWith({ submissionId: 'abc' });
+    expect(ctx.reports.accept).toHaveBeenCalledWith({ submissionId: 'abc', deviceId: 'dev-1' });
+  });
+
+  it('issues a signed device id with 201, limited per client IP', async () => {
+    const ctx = context();
+    const issued = await call(ctx, '/v1/device', post({}));
+    expect(issued.status).toBe(201);
+    expect(await issued.json()).toEqual({ deviceId: 'new-id.ok' });
+    expect(ctx.limits.hit).toHaveBeenCalledWith('device-issue', '203.0.113.7');
+
+    const capped = context({ limits: limitsWith(vi.fn(async () => ({ allowed: false as const, retryAfterSeconds: 90 }))) });
+    const blocked = await call(capped, '/v1/device', post({}));
+    expect(blocked.status).toBe(429);
+    expect(blocked.headers.get('retry-after')).toBe('90');
+    expect(await blocked.json()).toEqual({ code: 'rate_limited', message: 'Too many requests.', retryAfterSeconds: 90 });
+  });
+
+  it('never issues an unsigned id when the secret is missing', async () => {
+    const response = await call(context({ devices: { issue: vi.fn(() => undefined), verify: vi.fn() } }), '/v1/device', post({}));
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ code: 'device_unavailable', message: 'Unable to issue device identifier.' });
+  });
+
+  it('refuses a report whose device id is missing or not signed, before the device limit or the service', async () => {
+    const ctx = context();
+
+    for (const body of [{ submissionId: 'abc' }, { submissionId: 'abc', deviceId: 'bare-uuid' }, 'not json']) {
+      const response = await call(ctx, '/v1/reports', post(body));
+      expect(response.status).toBe(401);
+      expect(await response.json()).toEqual({ code: 'device_invalid', message: 'Device identifier is not valid.' });
+    }
+    expect(ctx.limits.hit).not.toHaveBeenCalledWith('report-device', expect.anything());
+    expect(ctx.reports.accept).not.toHaveBeenCalled();
+  });
+
+  it('applies the per-device report limit to the verified id and reports the wait', async () => {
+    const hit = vi.fn(async (kind: string) => (kind === 'report-device' ? { allowed: false as const, retryAfterSeconds: 600 } : allowed));
+    const ctx = context({ limits: limitsWith(hit) });
+
+    const response = await call(ctx, '/v1/reports', post({ submissionId: 'abc', deviceId: 'dev-1.ok' }));
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get('retry-after')).toBe('600');
+    expect(await response.json()).toEqual({ code: 'rate_limited', message: 'Too many requests.', retryAfterSeconds: 600 });
+    expect(hit).toHaveBeenCalledWith('report-device', 'dev-1');
+    expect(ctx.reports.accept).not.toHaveBeenCalled();
   });
 
   it('maps a rejected report to its status and body, and hides unexpected failures', async () => {
     const rejected = context({
       reports: { accept: vi.fn(async () => { throw new ReportRequestError(409, { code: 'already_reported', message: 'This device already reported a cut.' }); }) },
     });
-    const conflict = await call(rejected, '/v1/reports', post({}));
+    const conflict = await call(rejected, '/v1/reports', post({ deviceId: 'dev-1.ok' }));
     expect(conflict.status).toBe(409);
     expect(await conflict.json()).toEqual({ code: 'already_reported', message: 'This device already reported a cut.' });
 
     const broken = context({ reports: { accept: vi.fn(async () => { throw new Error('connection reset'); }) } });
-    const failure = await call(broken, '/v1/reports', post({}));
+    const failure = await call(broken, '/v1/reports', post({ deviceId: 'dev-1.ok' }));
     expect(failure.status).toBe(500);
     expect(await failure.json()).toEqual({ code: 'report_unavailable', message: 'Unable to process report.' });
-  });
-
-  it('treats an unparseable body as an empty report so the generic refusal applies', async () => {
-    const ctx = context();
-
-    await call(ctx, '/v1/reports', post('not json'));
-
-    expect(ctx.reports.accept).toHaveBeenCalledWith(undefined);
   });
 
   it('rejects bodies over 10 kB before any service runs', async () => {
@@ -84,7 +130,7 @@ describe('worker app', () => {
   });
 
   it('answers 429 with Retry-After when the global limit is exhausted', async () => {
-    const ctx = context({ limits: { global: vi.fn(async () => false), report: vi.fn(async () => ({ allowed: true as const })) } });
+    const ctx = context({ limits: { global: vi.fn(async () => false), hit: vi.fn(async () => allowed) } });
 
     const response = await call(ctx, '/v1/cells');
 
@@ -95,14 +141,14 @@ describe('worker app', () => {
   });
 
   it('applies the per-IP report limit to POST /v1/reports only and reports the wait', async () => {
-    const ctx = context({ limits: { global: vi.fn(async () => true), report: vi.fn(async () => ({ allowed: false as const, retryAfterSeconds: 1800 })) } });
+    const ctx = context({ limits: limitsWith(vi.fn(async () => ({ allowed: false as const, retryAfterSeconds: 1800 }))) });
 
     const blocked = await call(ctx, '/v1/reports', post({}));
     expect(blocked.status).toBe(429);
     expect(blocked.headers.get('retry-after')).toBe('1800');
     expect(await blocked.json()).toEqual({ code: 'rate_limited', message: 'Too many requests.', retryAfterSeconds: 1800 });
     expect(ctx.reports.accept).not.toHaveBeenCalled();
-    expect(ctx.limits.report).toHaveBeenCalledWith('203.0.113.7');
+    expect(ctx.limits.hit).toHaveBeenCalledWith('report-ip', '203.0.113.7');
 
     const read = await call(ctx, '/v1/cells');
     expect(read.status).toBe(200);

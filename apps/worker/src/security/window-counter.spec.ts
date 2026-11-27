@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { WindowCounter, reportPolicyFromEnv, type CounterStorage } from './window-counter.js';
+import { WindowCounter, policyFromEnv, type CounterStorage } from './window-counter.js';
 
 function memoryStorage(): CounterStorage & { data: Map<string, unknown> } {
   const data = new Map<string, unknown>();
@@ -62,13 +62,17 @@ describe('window counter', () => {
   });
 });
 
-describe('report policy', () => {
-  it('defaults to five reports per hour', () => {
-    expect(reportPolicyFromEnv({})).toEqual({ maxRequests: 5, windowMs: 3_600_000 });
+describe('limit policies', () => {
+  it('defaults to 60 reports per IP, 5 per device and 60 device ids per IP, each per hour', () => {
+    expect(policyFromEnv('report-ip', {})).toEqual({ maxRequests: 60, windowMs: 3_600_000 });
+    expect(policyFromEnv('report-device', {})).toEqual({ maxRequests: 5, windowMs: 3_600_000 });
+    expect(policyFromEnv('device-issue', {})).toEqual({ maxRequests: 60, windowMs: 3_600_000 });
   });
 
-  it('reads positive integers and falls back on anything else', () => {
-    expect(reportPolicyFromEnv({ REPORT_RATE_LIMIT_MAX: '3', REPORT_RATE_LIMIT_WINDOW_MS: '10000' })).toEqual({ maxRequests: 3, windowMs: 10_000 });
-    expect(reportPolicyFromEnv({ REPORT_RATE_LIMIT_MAX: '0', REPORT_RATE_LIMIT_WINDOW_MS: 'soon' })).toEqual({ maxRequests: 5, windowMs: 3_600_000 });
+  it('reads positive integers per kind and falls back on anything else', () => {
+    expect(policyFromEnv('report-ip', { REPORT_RATE_LIMIT_MAX: '3', REPORT_RATE_LIMIT_WINDOW_MS: '10000' })).toEqual({ maxRequests: 3, windowMs: 10_000 });
+    expect(policyFromEnv('report-device', { DEVICE_REPORT_RATE_LIMIT_MAX: '2', DEVICE_REPORT_RATE_LIMIT_WINDOW_MS: '5000' })).toEqual({ maxRequests: 2, windowMs: 5_000 });
+    expect(policyFromEnv('device-issue', { DEVICE_ISSUE_RATE_LIMIT_MAX: '7' })).toEqual({ maxRequests: 7, windowMs: 3_600_000 });
+    expect(policyFromEnv('report-ip', { REPORT_RATE_LIMIT_MAX: '0', REPORT_RATE_LIMIT_WINDOW_MS: 'soon' })).toEqual({ maxRequests: 60, windowMs: 3_600_000 });
   });
 });

@@ -530,7 +530,8 @@ async function sendReport(lineArgs) {
   const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
   const body = {
     submissionId: flagOf(lineArgs, "--submission") ?? `control-${stamp}`,
-    deviceId: flagOf(lineArgs, "--device") ?? `control-device-${stamp}`,
+    // The API only accepts a signed id from POST /v1/device; it is fetched after the dry-run exit.
+    deviceId: flagOf(lineArgs, "--device") ?? "<issued by POST /v1/device>",
     services: [service],
     providers: { [service]: flagOf(lineArgs, "--provider") ?? PROVIDERS[service] },
     status,
@@ -539,9 +540,14 @@ async function sendReport(lineArgs) {
   };
   const base = new URL(flagOf(lineArgs, "--base") ?? process.env.CONTROL_API_BASE ?? API_BASE).origin;
   if (lineArgs.includes("--dry-run")) report(true, { dryRun: true, method: "POST", url: `${base}/v1/reports`, body }, `ok  dry run: would POST ${base}/v1/reports\n${JSON.stringify(body, null, 2)}`);
+  if (!flagOf(lineArgs, "--device")) {
+    const issued = await api(lineArgs, "POST", "/v1/device", {});
+    if (issued.status !== 201 || typeof issued.data?.deviceId !== "string") report(false, { base: issued.base, status: issued.status, data: issued.data }, `FAIL device -> HTTP ${issued.status} ${JSON.stringify(issued.data)}  ->  503 device_unavailable means DEVICE_TOKEN_SECRET is unset; 429 is the per-IP issue limit`);
+    body.deviceId = issued.data.deviceId;
+  }
   const res = await api(lineArgs, "POST", "/v1/reports", body);
   const ok = res.status === 201 && res.data?.accepted === true;
-  report(ok, { base: res.base, status: res.status, data: res.data, sent: body }, ok ? `ok  report accepted (${body.submissionId}) at ${res.base}` : `FAIL report -> HTTP ${res.status} ${JSON.stringify(res.data)}  ->  400 report_unavailable is the generic refusal: intake is off, the point is outside every approved zone, or the body is invalid; 409 already_reported means this device reported in the last hour; 429 is the rate limit`);
+  report(ok, { base: res.base, status: res.status, data: res.data, sent: body }, ok ? `ok  report accepted (${body.submissionId}) at ${res.base}` : `FAIL report -> HTTP ${res.status} ${JSON.stringify(res.data)}  ->  503 intake_paused: intake is off; 422 outside_pilot_zone: the point is outside every approved area; 400 report_unavailable: invalid body; 401 device_invalid: --device is not a signed id; 409 already_reported: this device reported in the last hour; 429: a rate limit`);
 }
 
 // Add one function per user-facing feature, then register it below. Example:

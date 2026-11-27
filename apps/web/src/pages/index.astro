@@ -228,7 +228,7 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
       import { formatFreshness } from '../freshness.js';
       import { startPolling } from '../polling.js';
       import { createSubmissionIds, fetchWithDeadline, isTimeout } from '../request.js';
-      import { addOwnCell, createSafeStorage, getDeviceId, readCells, readOwnCells, saveCells } from '../storage.js';
+      import { addOwnCell, createDeviceIdentity, createSafeStorage, readCells, readOwnCells, saveCells } from '../storage.js';
 
       // Tells public/boot-watchdog.js (added on another branch) that the app script is running.
       document.documentElement.dataset.appBooted = '1';
@@ -271,7 +271,8 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
       const garden = $<HTMLElement>('.garden');
       // A blocked localStorage must not take the app down: every access goes through this guard.
       const storage = createSafeStorage();
-      const deviceId = getDeviceId(storage);
+      // The server signs the device id; it is fetched when the visitor first reports, not on load.
+      const withDevice = createDeviceIdentity(storage, () => fetchWithDeadline('/v1/device', { method: 'POST' }));
       // Per tab: the cells this visit reported, so the list and the map can say "Tu reporte".
       const sessionStore = createSafeStorage(() => sessionStorage);
       const submissionIds = createSubmissionIds();
@@ -1567,11 +1568,11 @@ const description = 'Mapa comunitario de cortes de agua, luz e internet en Lima.
           try {
             // A retry after a lost response reuses the id, so the server can recognise it as the same report.
             const submissionId = submissionIds.idFor(JSON.stringify({ services, providers, status }));
-            const response = await fetchWithDeadline('/v1/reports', {
+            const response = await withDevice((deviceId) => fetchWithDeadline('/v1/reports', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ submissionId, deviceId, services, providers, status, latitude: position.coords.latitude, longitude: position.coords.longitude }),
-            });
+            }));
             // Any HTTP answer settles this report: the next one is a new submission.
             submissionIds.settle();
             if (response.ok) {

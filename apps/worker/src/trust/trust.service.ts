@@ -1,4 +1,4 @@
-import { createHash, createHmac } from 'node:crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 
 export interface EligibilityInput {
   submittedAt: Date;
@@ -12,6 +12,27 @@ export interface EligibilityResult {
 
 export function createVersionedDeviceToken(deviceId: string, secret: string, version: string): string {
   return `${version}:${createHmac('sha256', secret).update(deviceId).digest('hex')}`;
+}
+
+// shortcut: signed device ids never expire or rotate; add a version prefix to the id if DEVICE_TOKEN_SECRET must rotate.
+export function signDeviceId(id: string, secret: string): string {
+  return `${id}.${createHmac('sha256', secret).update(`device:${id}`).digest('hex')}`;
+}
+
+/** A server-issued device id: `<uuid>.<hmac>`, so a browser cannot invent or rotate its own. */
+export function issueDeviceId(secret: string): string {
+  return signDeviceId(randomUUID(), secret);
+}
+
+/** Returns the id part when the signature is genuine, otherwise undefined. */
+export function verifyDeviceId(value: unknown, secret: string): string | undefined {
+  if (typeof value !== 'string' || !secret) return undefined;
+  const separator = value.lastIndexOf('.');
+  const id = value.slice(0, separator);
+  if (separator < 1) return undefined;
+  const expected = Buffer.from(signDeviceId(id, secret));
+  const given = Buffer.from(value);
+  return given.length === expected.length && timingSafeEqual(given, expected) ? id : undefined;
 }
 
 export function canonicalSubmissionHash(input: {

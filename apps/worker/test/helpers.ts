@@ -2,6 +2,7 @@ import { SELF } from 'cloudflare:test';
 import { env as workerEnv } from 'cloudflare:workers';
 
 import type { Env } from '../src/env.js';
+import { signDeviceId } from '../src/trust/trust.service.js';
 
 // `wrangler types --include-env=false` leaves the global env empty, so the bindings are typed from src/env.ts.
 export const env = workerEnv as unknown as Env & { TEST_MIGRATIONS: unknown[] };
@@ -31,8 +32,9 @@ export interface TestReport {
   longitude?: number;
 }
 
+/** `deviceId` is signed here like the server would have issued it; use `request` to send a raw one. */
 export function submit(report: TestReport): Promise<Response> {
-  return request('/v1/reports', { services: ['water'], providers: { water: 'sedapal' }, status: 'outage', ...lima, ...report });
+  return request('/v1/reports', { services: ['water'], providers: { water: 'sedapal' }, status: 'outage', ...lima, ...report, deviceId: signDeviceId(report.deviceId, 'test-device-secret') });
 }
 
 /** Wipes everything the app writes; PilotZone (migration data) stays. */
