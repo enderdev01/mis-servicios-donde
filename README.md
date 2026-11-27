@@ -98,7 +98,7 @@ Do not commit `.env` or secret values. Locally, pass values with `--var` or a `.
 | `TELEGRAM_BOT_TOKEN` | alert dispatch | Telegram bot credential. |
 | `TELEGRAM_CHAT_ID` | alert dispatch | Destination channel or chat identifier. |
 
-The global per-IP limit (120 requests per 60 s) is a Workers Rate Limiting binding in `wrangler.jsonc`, not an environment variable.
+The global per-IP limit (120 requests per 60 s) is a Workers Rate Limiting binding in `wrangler.jsonc`, not an environment variable. The Worker fails closed: without that binding every route, `/health` included, answers `503 service_unavailable`; without `DEVICE_TOKEN_SECRET` (which also keys the limiter object names and the stored request hashes with HMAC-SHA256) `POST /v1/device` and `POST /v1/reports` answer `503 service_unavailable`, while `/health` and the read routes keep working.
 
 Zone approval comes from `PilotZone` rows in D1, never from configuration. Every approved zone must carry an explicit bounding-box `boundary`; a zone without one matches no report. Bounding boxes are intentionally coarse operational coverage, not administrative polygons: the first-wave boxes have 18 positive-area intersections between neighbouring districts, so they must not be used to make precise district-attribution claims. Replace them with validated polygons before relying on border-level classification.
 
@@ -108,7 +108,7 @@ Keep every product gate `false` until the release checks and privacy review are 
 
 The API also rejects oversized JSON bodies, applies security headers, and returns `429` after the configured limits.
 
-Device identity: the browser does not choose its own device id. `POST /v1/device` answers `201 { "deviceId": "<uuid>.<signature>" }`, signed with `DEVICE_TOKEN_SECRET` (HMAC-SHA256, stateless, never expires; it works even while intake is paused, and answers `503 device_unavailable` when the secret is missing). `POST /v1/reports` must carry that id: a missing, bare or tampered one answers `401 device_invalid` and the web app then fetches a new id and retries once. Limits per hour, all answering `429 rate_limited` with `Retry-After` and `retryAfterSeconds`: 60 reports per client IP, 5 reports per signed device, 60 issued ids per client IP.
+Device identity: the browser does not choose its own device id. `POST /v1/device` answers `201 { "deviceId": "<uuid>.<signature>" }`, signed with `DEVICE_TOKEN_SECRET` (HMAC-SHA256, stateless, never expires; it works even while intake is paused, and answers `503 service_unavailable` when the secret is missing). `POST /v1/reports` must carry that id: a missing, bare or tampered one answers `401 device_invalid` and the web app then fetches a new id and retries once. Limits per hour, all answering `429 rate_limited` with `Retry-After` and `retryAfterSeconds`: 60 reports per client IP, 5 reports per signed device, 60 issued ids per client IP.
 
 | Surface | Enable condition | Disable / rollback effect |
 |---|---|---|

@@ -8,6 +8,6 @@ export interface Env {
   SCHEDULER: DurableObjectNamespace<Scheduler>;
   REPORT_LIMITER: DurableObjectNamespace<ReportLimiter>;
   CELL_COORDINATOR: DurableObjectNamespace<CellCoordinator>;
-  GLOBAL_LIMITER?: RateLimit;
+  GLOBAL_LIMITER: RateLimit;
   WEB_ORIGIN?: string;
 }

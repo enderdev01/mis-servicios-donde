@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -5,6 +6,7 @@ import {
   canonicalSubmissionHash,
   createVersionedDeviceToken,
   issueDeviceId,
+  limiterName,
   verifyDeviceId,
   sanitizeDisplayName,
   toPublicTrustOutcome,
@@ -18,9 +20,24 @@ describe('trust controls', () => {
     expect(createVersionedDeviceToken('device-1', 'secret', 'v2')).not.toBe(
       createVersionedDeviceToken('device-1', 'secret', 'v1'),
     );
-    expect(canonicalSubmissionHash({ h3Cell: '8a2a1072b59ffff', services: ['internet', 'water'], status: 'outage' })).toBe(
-      canonicalSubmissionHash({ h3Cell: '8a2a1072b59ffff', services: ['water', 'internet'], status: 'outage' }),
+    expect(canonicalSubmissionHash({ h3Cell: '8a2a1072b59ffff', services: ['internet', 'water'], status: 'outage' }, 'secret')).toBe(
+      canonicalSubmissionHash({ h3Cell: '8a2a1072b59ffff', services: ['water', 'internet'], status: 'outage' }, 'secret'),
     );
+  });
+
+  it('keys the request hash and the limiter name with the secret, under different labels', () => {
+    const input = { h3Cell: '8a2a1072b59ffff', services: ['water:sedapal'], status: 'outage' };
+    const unkeyed = createHash('sha256').update(JSON.stringify(input)).digest('hex');
+
+    expect(canonicalSubmissionHash(input, 'one')).not.toBe(canonicalSubmissionHash(input, 'two'));
+    expect(canonicalSubmissionHash(input, 'one')).not.toBe(unkeyed);
+    expect(() => canonicalSubmissionHash(input, '')).toThrow();
+
+    const oldName = createHash('sha256').update('report-ip-limit:203.0.113.7').digest('hex');
+    expect(limiterName('report-ip', '203.0.113.7', 'one')).not.toBe(limiterName('report-ip', '203.0.113.7', 'two'));
+    expect(limiterName('report-ip', '203.0.113.7', 'one')).not.toBe(oldName);
+    expect(limiterName('report-ip', 'x', 'one')).not.toBe(limiterName('device-issue', 'x', 'one'));
+    expect(() => limiterName('report-ip', 'x', '')).toThrow();
   });
 
   it('issues a signed device id that only the same secret verifies', () => {
